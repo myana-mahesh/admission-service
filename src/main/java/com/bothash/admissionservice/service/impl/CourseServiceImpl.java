@@ -87,6 +87,7 @@ public class CourseServiceImpl {
 
 
             // Attach template to course
+            template=this.courseFeeTemplateRepository.save(template);
             course.setCourseFeeTemplate(template);
         }
 
