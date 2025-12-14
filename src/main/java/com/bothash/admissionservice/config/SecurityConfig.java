@@ -13,6 +13,7 @@ public class SecurityConfig {
         http
             .csrf(csrf -> csrf.disable()) // disable CSRF (safe for dev; configure in prod)
             .authorizeHttpRequests(auth -> auth
+            	.requestMatchers("/api/invoices/download/**").permitAll()
                 .anyRequest().authenticated() // allow every request without authentication
             ).oauth2ResourceServer(oauth2 -> oauth2.jwt());
 		

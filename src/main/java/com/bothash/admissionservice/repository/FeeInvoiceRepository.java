@@ -1,0 +1,13 @@
+package com.bothash.admissionservice.repository;
+
+import java.util.List;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import com.bothash.admissionservice.entity.FeeInvoice;
+
+public interface FeeInvoiceRepository extends JpaRepository<FeeInvoice, Long> {
+
+    List<FeeInvoice> findByInstallment_InstallmentId(Long installmentId);
+
+    boolean existsByInstallment_InstallmentId(Long installmentId);
+}
