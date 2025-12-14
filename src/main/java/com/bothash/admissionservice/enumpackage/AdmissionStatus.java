@@ -1,5 +1,5 @@
 package com.bothash.admissionservice.enumpackage;
 
 public enum AdmissionStatus {
-	Draft, Submitted, Verified, REJECTED, PENDING, SUCCESS,ADMITTED
+	Draft, Submitted, Verified, REJECTED, PENDING, SUCCESS,ADMITTED,UNDER_CANCELLATION,CANCELLED
 }

@@ -14,6 +14,7 @@ import com.bothash.admissionservice.entity.AdmissionSignoff;
 import com.bothash.admissionservice.entity.FeeInstallment;
 import com.bothash.admissionservice.entity.FileUpload;
 import com.bothash.admissionservice.entity.PaymentModeMaster;
+import com.bothash.admissionservice.enumpackage.AdmissionStatus;
 import com.bothash.admissionservice.enumpackage.PaymentMode;
 
 public interface Admission2Service {
@@ -61,4 +62,8 @@ public interface Admission2Service {
 
 	FeeInstallment recordPayment(Long installmentId, BigDecimal amountPaid, LocalDate paidOn, PaymentModeMaster mode,
 			String txnRef);
+
+	Admission2 getAdmission(Long admissionId);
+
+	void updateStatus(Long admissionId, AdmissionStatus status);
 }

@@ -115,4 +115,8 @@ public class Admission2 extends Auditable {
 	
 	@UpdateTimestamp
 	private LocalDateTime modifiedOn;
+
+    @OneToOne(mappedBy = "admission", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @JsonManagedReference("admission-cancellation")
+    private AdmissionCancellation cancellation;
 }
