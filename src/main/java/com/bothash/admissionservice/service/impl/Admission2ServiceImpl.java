@@ -322,4 +322,18 @@ public class Admission2ServiceImpl implements Admission2Service {
 		}
 		return null;
 	}
+
+
+	@Transactional
+	public Admission2 getAdmission(Long admissionId) {
+		return admissionRepo.findById(admissionId)
+				.orElseThrow(() -> new RuntimeException("Admission not found"));
+	}
+
+	@Transactional
+	public void updateStatus(Long admissionId, AdmissionStatus status) {
+		Admission2 admission = getAdmission(admissionId);
+		admission.setStatus(status);
+		admissionRepo.save(admission);
+	}
 }

@@ -1,19 +1,12 @@
 package com.bothash.admissionservice.controller;
 
-import com.bothash.admissionservice.dto.CreateAdmissionRequest;
-import com.bothash.admissionservice.dto.DocReceivedRequest;
-import com.bothash.admissionservice.dto.InstallmentUpsertRequest;
-import com.bothash.admissionservice.dto.MultipleUploadRequest;
-import com.bothash.admissionservice.dto.OfficeUpdateRequest;
-import com.bothash.admissionservice.dto.PaymentRequest;
-import com.bothash.admissionservice.dto.UploadRequest;
-import com.bothash.admissionservice.entity.Admission2;
-import com.bothash.admissionservice.entity.AdmissionDocument;
-import com.bothash.admissionservice.entity.AdmissionSignoff;
-import com.bothash.admissionservice.entity.FeeInstallment;
-import com.bothash.admissionservice.entity.FileUpload;
+import com.bothash.admissionservice.dto.*;
+import com.bothash.admissionservice.entity.*;
+import com.bothash.admissionservice.enumpackage.AdmissionStatus;
+import com.bothash.admissionservice.repository.Admission2Repository;
 import com.bothash.admissionservice.service.Admission2Service;
 
+import com.bothash.admissionservice.service.AdmissionCancellationService;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 
@@ -30,6 +23,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class Admission2Controller {
   private final Admission2Service admissionService;
+  private final Admission2Repository admission2Repository;
+  private final AdmissionCancellationService cancellationService;
+
 
   @PostMapping
   public ResponseEntity<Admission2> create( @RequestBody CreateAdmissionRequest req){
@@ -124,4 +120,7 @@ public class Admission2Controller {
 
 		return new ResponseEntity<Admission2>(admisison, HttpStatus.INTERNAL_SERVER_ERROR);
 	}
+
+
+
 }
