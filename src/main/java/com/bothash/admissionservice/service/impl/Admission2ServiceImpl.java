@@ -63,13 +63,14 @@ public class Admission2ServiceImpl implements Admission2Service {
 		Admission2 a = this.admissionRepo.findByStudentStudentIdAndYearYearIdAndCourseCourseId(req.getStudentId(), year.getYearId(),course.getCourseId());
 		if(a == null) {
 			a = new Admission2();
+			a.setStatus(AdmissionStatus.PENDING);
 		}
 		a.setStudent(student);
 		a.setYear(year);
 		a.setCourse(course);
 		a.setFormNo(req.getFormNo());
 		a.setFormDate(req.getFormDate());
-		a.setStatus(AdmissionStatus.PENDING);
+		
 		a.setTotalFees(req.getTotalFees());
 		a.setDiscount(req.getDiscount());
 		a.setNoOfInstallments(req.getNoOfInstallments());

@@ -10,4 +10,6 @@ public interface FeeInvoiceRepository extends JpaRepository<FeeInvoice, Long> {
     List<FeeInvoice> findByInstallment_InstallmentId(Long installmentId);
 
     boolean existsByInstallment_InstallmentId(Long installmentId);
+
+	List<FeeInvoice> findByInstallment_Admission_AdmissionId(Long admissionId);
 }

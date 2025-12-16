@@ -22,7 +22,7 @@ public class FeeInstallmentServiceImpl {
         FeeInstallment inst = installmentRepo.findById(installmentId)
                 .orElseThrow(() -> new IllegalArgumentException("Installment not found: " + installmentId));
 
-        String oldStatus = inst.getStatus();
+        String oldStatus = "";
         inst.setStatus(newStatus);
         // set paidOn if becoming Paid (optional)
         if ("Paid".equalsIgnoreCase(newStatus) && inst.getPaidOn() == null) {
@@ -32,8 +32,7 @@ public class FeeInstallmentServiceImpl {
         FeeInstallment saved = installmentRepo.save(inst);
 
         // Only when changing from non-paid → Paid
-        if (!"Paid".equalsIgnoreCase(oldStatus)
-                && "Paid".equalsIgnoreCase(newStatus)) {
+        if ("Paid".equalsIgnoreCase(newStatus)) {
             Admission2 admission = saved.getAdmission();
             FeeInvoice invoice = invoiceService.generateInvoiceForInstallment(admission, saved);
             log.info("Generated invoice {} for installment {}", invoice.getInvoiceNumber(), installmentId);

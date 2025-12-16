@@ -44,7 +44,10 @@ public class AdmissionCancellationService {
             existing.setCancelCharges(dto.getCancelCharges());
             existing.setRemark(dto.getRemark());
             existing.setHandlingPerson(dto.getHandlingPerson());
-            existing.setRefundProofFileName(dto.getRefundProofFileName());
+            
+            if(dto.getRefundProofFileName()!=null && !dto.getRefundProofFileName().isEmpty())
+            	existing.setRefundProofFileName(dto.getRefundProofFileName());
+            
             cancellationRepository.save(existing);
         } else {
             // New record
@@ -74,10 +77,12 @@ public class AdmissionCancellationService {
 
         Admission2 admission = admission2Service.getAdmission(admissionId);
         CancelAdmissionDTO cancelAdmissionDTO = new CancelAdmissionDTO();
-        cancelAdmissionDTO.setCancelCharges(admission.getCancellation().getCancelCharges());
-        cancelAdmissionDTO.setRemark(admission.getCancellation().getRemark());
-        cancelAdmissionDTO.setHandlingPerson(admission.getCancellation().getHandlingPerson());
-        cancelAdmissionDTO.setRefundProofFileName(admission.getCancellation().getRefundProofFileName());
+        if(admission.getCancellation()!=null) {
+        	cancelAdmissionDTO.setCancelCharges(admission.getCancellation().getCancelCharges());
+            cancelAdmissionDTO.setRemark(admission.getCancellation().getRemark());
+            cancelAdmissionDTO.setHandlingPerson(admission.getCancellation().getHandlingPerson());
+            cancelAdmissionDTO.setRefundProofFileName(admission.getCancellation().getRefundProofFileName());
+        }
         return cancelAdmissionDTO; // may return null if not cancelled
     }
 

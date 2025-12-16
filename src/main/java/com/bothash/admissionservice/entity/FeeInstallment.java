@@ -64,8 +64,9 @@ public class FeeInstallment extends Auditable {
 //    @Column(length = 20)
 //    private PaymentMode paymentMode;
     
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "payment_mode_id")
+    @JsonBackReference
     private PaymentModeMaster paymentMode;
 
     @Column(length = 100)
