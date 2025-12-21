@@ -22,6 +22,7 @@ import com.bothash.admissionservice.entity.AcademicYear;
 import com.bothash.admissionservice.entity.Admission2;
 import com.bothash.admissionservice.entity.AdmissionDocument;
 import com.bothash.admissionservice.entity.AdmissionSignoff;
+import com.bothash.admissionservice.entity.College;
 import com.bothash.admissionservice.entity.Course;
 import com.bothash.admissionservice.entity.DocumentType;
 import com.bothash.admissionservice.entity.FeeInstallment;
@@ -39,6 +40,7 @@ public class Admission2ServiceImpl implements Admission2Service {
 	private final Admission2Repository admissionRepo;
 	private final StudentRepository studentRepo;
 	private final CourseRepository courseRepo;
+	private final CollegeRepository collegeRepo;
 	private final AcademicYearRepository yearRepo;
 	private final DocumentTypeRepository docTypeRepo;
 	private final AdmissionDocumentRepository admDocRepo;
@@ -59,20 +61,26 @@ public class Admission2ServiceImpl implements Admission2Service {
 				.orElseThrow(() -> new IllegalArgumentException("Year not found: " + req.getAcademicYearLabel()));
 		Course course = courseRepo.findById(req.getCourseCode())
 				.orElseThrow(() -> new IllegalArgumentException("Course not found: " + req.getAcademicYearLabel()));
+		College college = null;
+		if (req.getCollegeId() != null) {
+			college = collegeRepo.findById(req.getCollegeId())
+					.orElseThrow(() -> new IllegalArgumentException("College not found: " + req.getCollegeId()));
+		}
 
 		Admission2 a = this.admissionRepo.findByStudentStudentIdAndYearYearIdAndCourseCourseId(req.getStudentId(), year.getYearId(),course.getCourseId());
 		if(a == null) {
 			a = new Admission2();
 			a.setStatus(AdmissionStatus.PENDING);
+			a.setFormDate(req.getFormDate());
 		}
 		a.setStudent(student);
 		a.setYear(year);
 		a.setCourse(course);
-		a.setFormNo(req.getFormNo());
-		a.setFormDate(req.getFormDate());
-		
+		a.setCollege(college);
 		a.setTotalFees(req.getTotalFees());
 		a.setDiscount(req.getDiscount());
+		a.setDiscountRemark(req.getDiscountRemark());
+		a.setDiscountRemarkOther(req.getDiscountRemarkOther());
 		a.setNoOfInstallments(req.getNoOfInstallments());
 		a=admissionRepo.save(a);
 		
@@ -192,7 +200,7 @@ public class Admission2ServiceImpl implements Admission2Service {
 	}
 	@Override
 	public FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
-			LocalDate dueDate, String mode, String receivedBy, String status, Double yearlyFeesAmount) {
+			LocalDate dueDate, String mode, String receivedBy, String status, Double yearlyFeesAmount,String txnRef, String role) {
 		Admission2 a = admissionRepo.findById(admissionId)
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
 		
@@ -220,7 +228,13 @@ public class Admission2ServiceImpl implements Admission2Service {
 						PaymentModeMaster paymentModeMaster = this.service.getByMode(mode);
 						f.setPaymentMode(paymentModeMaster);
 					}
-					f.setStatus(status);
+					f.setTxnRef(txnRef);
+					if(status!=null && status.equalsIgnoreCase("Paid") && role.equalsIgnoreCase("BRANCH_USER")) {
+						f.setStatus("Under Verification");
+					}else {
+						f.setStatus(status);
+					}
+						
 					f.setReceivedBy(receivedBy);
 					
 					return f;
@@ -232,7 +246,13 @@ public class Admission2ServiceImpl implements Admission2Service {
 			PaymentModeMaster paymentModeMaster = this.service.getByMode(mode);
 			fee.setPaymentMode(paymentModeMaster);
 		}
-		fee.setStatus(status);
+		if(status!=null && status.equalsIgnoreCase("Paid") && role.equalsIgnoreCase("BRANCH_USER")) {
+			fee.setStatus("Under Verification");
+		}else if(status!=null){
+			fee.setStatus(status);
+		}
+		
+		fee.setTxnRef(txnRef);
 		fee.setReceivedBy(receivedBy);
 		fee.setAmountDue(amountDue);
 		fee.setDueDate(dueDate);
@@ -242,10 +262,11 @@ public class Admission2ServiceImpl implements Admission2Service {
 
 	@Override
 	  @Transactional
-	  public List<FeeInstallment> upsertInstallments(Long admissionId, List<InstallmentUpsertRequest> items) {
+	  public List<FeeInstallment> upsertInstallments(Long admissionId, List<InstallmentUpsertRequest> items,String role) {
 	    List<FeeInstallment> out = new ArrayList<>(items.size());
 	    for (var it : items) {
-	      out.add(upsertInstallment(admissionId, it.getStudyYear(), it.getInstallmentNo(), it.getAmountDue(), it.getDueDate(),it.getMode(),it.getReceivedBy(),it.getStatus(),it.getYearlyFees()));
+	      out.add(upsertInstallment(admissionId, it.getStudyYear(), it.getInstallmentNo(), it.getAmountDue(), it.getDueDate(),it.getMode(),
+	    		  it.getReceivedBy(),it.getStatus(),it.getYearlyFees(),it.getTxnRef(),role));
 	    }
 	    return out;
 	  }

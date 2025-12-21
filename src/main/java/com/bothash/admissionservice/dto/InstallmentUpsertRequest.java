@@ -26,6 +26,7 @@ public class InstallmentUpsertRequest {
   private String mode;     // e.g., CASH/UPI/CARD
   private String remarks;
   private String status;
+  private String txnRef;
   private String receivedBy;
   private Double yearlyFees;
 }

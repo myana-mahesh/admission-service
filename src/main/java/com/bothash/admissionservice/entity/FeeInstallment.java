@@ -75,4 +75,8 @@ public class FeeInstallment extends Auditable {
     private String status;
     
     private String receivedBy;
+    
+    @Column(name = "is_verified", nullable = false, columnDefinition = "boolean default false")
+    private Boolean isVerified = false;
+
 }

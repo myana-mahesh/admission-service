@@ -71,6 +71,7 @@ public class Admission2Controller {
   @Transactional
   public ResponseEntity<List<FeeInstallment>> upsertInstallments(
       @PathVariable Long id,
+      @RequestParam String role,
       @RequestBody  List< InstallmentUpsertRequest> items
   ) {
     // basic same-request duplicate guard
@@ -81,7 +82,7 @@ public class Admission2Controller {
         throw new IllegalArgumentException("Duplicate (studyYear, installmentNo) in request: " + key);
       }
     }
-    return ResponseEntity.ok(admissionService.upsertInstallments(id, items));
+    return ResponseEntity.ok(admissionService.upsertInstallments(id, items,role));
   }
 
 

@@ -2,15 +2,15 @@ package com.bothash.admissionservice.service.impl;
 
 import org.springframework.stereotype.Service;
 
-
-
 import com.bothash.admissionservice.dto.CourseFeeRequestDto;
 import com.bothash.admissionservice.entity.Course;
 import com.bothash.admissionservice.entity.CourseFeeTemplate;
 import com.bothash.admissionservice.entity.CourseFeeTemplateInstallment;
 import com.bothash.admissionservice.repository.CourseFeeTemplateRepository;
 import com.bothash.admissionservice.repository.CourseRepository;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
@@ -69,34 +69,49 @@ public class CourseServiceImpl {
 
             int i = 0;
             for (CourseFeeRequestDto.InstallmentDto instDto : feeTemplateDto.getInstallments()) {
+
+                // ---- Basic validation (keep simple, you can move to @Valid) ----
+                if (instDto.getDueMonth() == null || instDto.getDueMonth() < 1 || instDto.getDueMonth() > 12) {
+                    throw new IllegalArgumentException("dueMonth must be between 1 and 12");
+                }
+                if (instDto.getDueDayOfMonth() == null || instDto.getDueDayOfMonth() < 1 || instDto.getDueDayOfMonth() > 31) {
+                    throw new IllegalArgumentException("dueDayOfMonth must be between 1 and 31");
+                }
+
                 CourseFeeTemplateInstallment inst = new CourseFeeTemplateInstallment();
                 inst.setTemplate(template);
-                inst.setSequence(instDto.getSequence() != null ? instDto.getSequence() : (i + 1));
-                inst.setAmount(instDto.getAmount());
-                inst.setDueDaysFromAdmission(instDto.getDueDaysFromAdmission());
 
+                // sequence: fallback to running index if not provided
+                inst.setSequence(instDto.getSequence() != null ? instDto.getSequence() : (i + 1));
+
+                inst.setAmount(instDto.getAmount());
+
+                // ✅ NEW schedule fields
+                inst.setDueMonth(instDto.getDueMonth());
+                inst.setDueDayOfMonth(instDto.getDueDayOfMonth());
+
+                // ✅ yearNumber:
+                // null => repeat every year
+                // 1..N => only for that year (optional feature)
                 Integer yearNumber = instDto.getYearNumber();
-                if (yearNumber == null || yearNumber <= 0) {
-                    yearNumber = 1;
-                }
+                if (yearNumber != null && yearNumber <= 0) yearNumber = null;
                 inst.setYearNumber(yearNumber);
 
                 template.getInstallments().add(inst);
                 i++;
             }
 
-
             // Attach template to course
-            template=this.courseFeeTemplateRepository.save(template);
+            template = this.courseFeeTemplateRepository.save(template);
             course.setCourseFeeTemplate(template);
         }
 
         // Save course (with cascade to template + installments)
         Course saved = courseRepository.save(course);
 
-        // Make sure template id is persisted for DTO response
+        // Ensure template id is persisted for DTO response (safety)
         if (saved.getCourseFeeTemplate() != null &&
-            saved.getCourseFeeTemplate().getCourseFeeTemplateId() == null) {
+                saved.getCourseFeeTemplate().getCourseFeeTemplateId() == null) {
             courseFeeTemplateRepository.save(saved.getCourseFeeTemplate());
         }
 
@@ -144,22 +159,37 @@ public class CourseServiceImpl {
     private List<CourseFeeRequestDto.InstallmentDto> mapInstallmentsToDto(List<CourseFeeTemplateInstallment> installments) {
         if (installments == null) return List.of();
 
+        // Sort:
+        // 1) yearNumber null first? or last? For template display: keep null first (repeat pattern)
+        // 2) then sequence
+        Comparator<CourseFeeTemplateInstallment> cmp =
+                Comparator.comparing(
+                                (CourseFeeTemplateInstallment x) -> x.getYearNumber() == null ? 0 : 1
+                        )
+                        .thenComparing(x -> x.getYearNumber() == null ? 0 : x.getYearNumber())
+                        .thenComparingInt(CourseFeeTemplateInstallment::getSequence);
+
         return installments.stream()
-                .sorted(Comparator.comparingInt(CourseFeeTemplateInstallment::getSequence))
+                .sorted(cmp)
                 .map(inst -> CourseFeeRequestDto.InstallmentDto.builder()
                         .id(inst.getCourseFeeTemplateInstallmentId())
                         .sequence(inst.getSequence())
                         .amount(inst.getAmount())
-                        .dueDaysFromAdmission(inst.getDueDaysFromAdmission())
-                        .yearNumber(inst.getYearNumber())   
+
+                        // ✅ NEW
+                        .dueMonth(inst.getDueMonth())
+                        .dueDayOfMonth(inst.getDueDayOfMonth())
+
+                        // nullable = repeat
+                        .yearNumber(inst.getYearNumber())
                         .build())
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public List<CourseFeeRequestDto> getAllCoursesWithFee() {
         return courseRepository.findAll().stream()
-                .map(course -> mapToDto(course)) // 🔥 reuse existing logic
+                .map(this::mapToDto)
                 .collect(Collectors.toList());
     }
 }
-

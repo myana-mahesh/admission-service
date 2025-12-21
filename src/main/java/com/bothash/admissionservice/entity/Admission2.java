@@ -59,6 +59,10 @@ public class Admission2 extends Auditable {
     @JoinColumn(name = "course_id", nullable = false)
     private Course course;
 
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "college_id")
+    private College college;
+
     @Column(length = 50)
     private String formNo;
 
@@ -84,6 +88,10 @@ public class Admission2 extends Auditable {
     private Double totalFees;
     
     private Double discount;
+    
+    private String discountRemark;
+    
+    private String discountRemarkOther;
     
     private Integer noOfInstallments;
     
