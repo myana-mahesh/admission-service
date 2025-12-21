@@ -1,5 +1,7 @@
 package com.bothash.admissionservice.dto;
 
+import com.bothash.admissionservice.entity.HscDetails;
+import com.bothash.admissionservice.entity.SscDetails;
 import lombok.*;
 
 import org.hibernate.annotations.processing.Pattern;
@@ -39,5 +41,13 @@ public class CreateStudentRequest {
 	private String motherName;
 	private String motherMobile;
 	private Long studendId;
+	private String bloodGroup;
+	private SscDetails sscDetails;
+	private HscDetails hscDetails;
+	private String batch;
+	private String registrationNumber;
+	private Integer age;
+	private Long courseCode; // e.g., DPHARM
+	private String academicYearLabel; // e.g., 2025-26
 	
 }

@@ -49,6 +49,7 @@ public class Admission2 extends Auditable {
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "student_id", nullable = false)
+    @JsonManagedReference
     private Student student;
 
     @ManyToOne(fetch = FetchType.EAGER)
@@ -123,4 +124,30 @@ public class Admission2 extends Auditable {
     @OneToOne(mappedBy = "admission", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @JsonManagedReference("admission-cancellation")
     private AdmissionCancellation cancellation;
+
+/*    // 🔥 INVERSE SIDE
+    @OneToOne(mappedBy = "admission", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private SscDetails sscDetails;
+
+    @OneToOne(mappedBy = "admission", cascade = CascadeType.ALL, orphanRemoval = true)
+    private HscDetails hscDetails;*/
+
+    @Column(name = "batch")
+    private String batch;
+
+    @Column(name = "registration_number", unique = true)
+    private String registrationNumber;
+
+    private String referenceName;
+
+    // Admission taken at
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "admission_branch_id")
+    private BranchMaster admissionBranch;
+
+    // Lecture attended at
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "lecture_branch_id")
+    private BranchMaster lectureBranch;
+
 }

@@ -3,6 +3,7 @@ package com.bothash.admissionservice.repository;
 import java.util.List;
 import java.util.Optional;
 
+import com.bothash.admissionservice.enumpackage.Gender;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -29,4 +30,47 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
                   or s.mobile         like concat('%', :q, '%'))
            """)
     Page<Student> search(@Param("q") String q, Pageable pageable);
-	}
+
+
+/*	@Query("""
+    SELECT s FROM Student s
+    LEFT JOIN s.course c
+    WHERE
+        (:q IS NULL OR
+            LOWER(s.fullName) LIKE LOWER(CONCAT('%', :q, '%'))
+        )
+    AND (:courseId IS NULL OR c.id = :courseId)
+    AND (:batch IS NULL OR s.batch = :batch)
+    AND (:academicYear IS NULL OR s.academicYear = :academicYear)
+    AND (:gender IS NULL OR s.gender = :gender)
+""")
+	Page<Student> findWithFilters(
+			@Param("q") String q,
+			@Param("courseId") Long courseId,
+			@Param("batch") String batch,
+			@Param("academicYear") Integer academicYear,
+			@Param("gender") Gender gender,
+			Pageable pageable
+	);*/
+
+	@Query("""
+    SELECT s FROM Student s
+    WHERE
+        (:q IS NULL OR
+            LOWER(s.fullName) LIKE LOWER(CONCAT('%', :q, '%'))
+            OR s.mobile LIKE CONCAT('%', :q, '%')
+            OR s.email LIKE CONCAT('%', :q, '%')
+            OR s.absId LIKE CONCAT('%', :q, '%')
+        )
+    AND (:batch IS NULL OR s.batch = :batch)
+    AND (:gender IS NULL OR s.gender = :gender)
+""")
+	Page<Student> findWithFilters(
+			@Param("q") String q,
+			@Param("batch") String batch,
+			@Param("gender") Gender gender,
+			Pageable pageable
+	);
+
+
+}

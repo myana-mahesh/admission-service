@@ -82,6 +82,7 @@ public class AdmissionCancellationService {
             cancelAdmissionDTO.setRemark(admission.getCancellation().getRemark());
             cancelAdmissionDTO.setHandlingPerson(admission.getCancellation().getHandlingPerson());
             cancelAdmissionDTO.setRefundProofFileName(admission.getCancellation().getRefundProofFileName());
+            cancelAdmissionDTO.setStudentAcknowledgementProofFileName(admission.getCancellation().getStudentAcknowledgementProofFileName());
         }
         return cancelAdmissionDTO; // may return null if not cancelled
     }
@@ -98,6 +99,7 @@ public class AdmissionCancellationService {
         entity.setHandlingPerson(dto.getHandlingPerson());
         entity.setRemark(dto.getRemark());
         entity.setRefundProofFileName(dto.getRefundProofFileName());
+        entity.setStudentAcknowledgementProofFileName(dto.getStudentAcknowledgementProofFileName());
 
         cancellationRepository.save(entity);
 

@@ -2,6 +2,7 @@ package com.bothash.admissionservice.service;
 
 import java.util.Optional;
 
+import com.bothash.admissionservice.enumpackage.Gender;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -16,4 +17,13 @@ public interface StudentService {
 	Student getPhoneNumber(String absId, String mobile);
 	Page<Student> getStudents(String q, Pageable pageable);
 	StudentDto toDto(Student s);
+	Page<Student> getStudents(
+			String q,
+			Long course,
+			String batch,
+			Integer year,
+			Gender gender,
+			Pageable pageable
+	);
+
 }

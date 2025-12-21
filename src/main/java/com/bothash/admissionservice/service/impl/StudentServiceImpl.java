@@ -3,6 +3,7 @@ package com.bothash.admissionservice.service.impl;
 import com.bothash.admissionservice.dto.StudentDto;
 import com.bothash.admissionservice.dto.StudentDto;
 import com.bothash.admissionservice.entity.Student;
+import com.bothash.admissionservice.enumpackage.Gender;
 import com.bothash.admissionservice.repository.StudentRepository;
 import com.bothash.admissionservice.service.StudentService;
 
@@ -73,4 +74,22 @@ public class StudentServiceImpl implements StudentService {
 	    dto.setMobile(s.getMobile());
 	    return dto;
 	}
+
+	@Override
+	public Page<Student> getStudents(
+			String q,
+			Long courseId,
+			String batch,
+			Integer academicYear,
+			Gender gender,
+			Pageable pageable
+	) {
+		/*return studentRepo.findWithFilters(
+				q, courseId, batch, academicYear, gender, pageable
+		);*/
+		return studentRepo.findWithFilters(
+				q, batch, gender, pageable
+		);
+	}
+
 }
