@@ -18,4 +18,7 @@ public class OfficeUpdateRequest {
 	private LocalDate examDueDate;
 	@DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
 	private LocalDate dateOfAdmission;
+	private String batch;
+	private String registrationNumber;
+	private String referenceName;
 }

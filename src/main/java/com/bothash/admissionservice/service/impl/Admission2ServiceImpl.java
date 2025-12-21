@@ -1,5 +1,6 @@
 package com.bothash.admissionservice.service.impl;
 
+import com.bothash.admissionservice.entity.*;
 import lombok.RequiredArgsConstructor;
 
 import java.math.BigDecimal;
@@ -18,17 +19,6 @@ import com.bothash.admissionservice.dto.CreateAdmissionRequest;
 import com.bothash.admissionservice.dto.InstallmentUpsertRequest;
 import com.bothash.admissionservice.dto.MultipleUploadRequest;
 import com.bothash.admissionservice.dto.UploadRequest;
-import com.bothash.admissionservice.entity.AcademicYear;
-import com.bothash.admissionservice.entity.Admission2;
-import com.bothash.admissionservice.entity.AdmissionDocument;
-import com.bothash.admissionservice.entity.AdmissionSignoff;
-import com.bothash.admissionservice.entity.Course;
-import com.bothash.admissionservice.entity.DocumentType;
-import com.bothash.admissionservice.entity.FeeInstallment;
-import com.bothash.admissionservice.entity.FileUpload;
-import com.bothash.admissionservice.entity.PaymentModeMaster;
-import com.bothash.admissionservice.entity.Student;
-import com.bothash.admissionservice.entity.YearlyFees;
 import com.bothash.admissionservice.enumpackage.AdmissionStatus;
 import com.bothash.admissionservice.repository.*;
 
@@ -46,10 +36,11 @@ public class Admission2ServiceImpl implements Admission2Service {
 	private final FeeInstallmentRepository feeRepo;
 	private final AdmissionSignoffRepository signoffRepo;
 	private final PaymentModeService service;
-	
+	private final BranchRepository branchRepository;
 	
 	@Autowired
 	private YearlyFeesRepository yearlyFeesRepository;
+
 
 	@Override
 	public Admission2 createAdmission(CreateAdmissionRequest req) {
@@ -59,6 +50,14 @@ public class Admission2ServiceImpl implements Admission2Service {
 				.orElseThrow(() -> new IllegalArgumentException("Year not found: " + req.getAcademicYearLabel()));
 		Course course = courseRepo.findById(req.getCourseCode())
 				.orElseThrow(() -> new IllegalArgumentException("Course not found: " + req.getAcademicYearLabel()));
+
+		BranchMaster admissionBranch =
+				branchRepository.findById(req.getAdmissionBranchId())
+						.orElseThrow(() -> new RuntimeException("Admission branch not found"));
+
+		BranchMaster lectureBranch =
+				branchRepository.findById(req.getLectureBranchId())
+						.orElseThrow(() -> new RuntimeException("Lecture branch not found"));
 
 		Admission2 a = this.admissionRepo.findByStudentStudentIdAndYearYearIdAndCourseCourseId(req.getStudentId(), year.getYearId(),course.getCourseId());
 		if(a == null) {
@@ -74,6 +73,11 @@ public class Admission2ServiceImpl implements Admission2Service {
 		a.setTotalFees(req.getTotalFees());
 		a.setDiscount(req.getDiscount());
 		a.setNoOfInstallments(req.getNoOfInstallments());
+		a.setBatch(req.getOfficeUpdateRequest().getBatch());
+		a.setRegistrationNumber(req.getOfficeUpdateRequest().getRegistrationNumber());
+		a.setReferenceName(req.getOfficeUpdateRequest().getReferenceName());
+		a.setAdmissionBranch(admissionBranch);
+		a.setLectureBranch(lectureBranch);
 		a=admissionRepo.save(a);
 		
 		return this.updateOfficeDetails(a.getAdmissionId(), req.getOfficeUpdateRequest().getLastCollege(), req.getOfficeUpdateRequest().getCollegeAttended(), req.getOfficeUpdateRequest().getCollegeLocation(), 
@@ -91,6 +95,7 @@ public class Admission2ServiceImpl implements Admission2Service {
 		a.setRemarks(remarks);
 		a.setExamDueDate(examDueDate);
 		a.setDateOfAdm(dateOfAdmission);
+
 		return admissionRepo.save(a);
 	}
 

@@ -1,5 +1,10 @@
 package com.bothash.admissionservice.controller;
 
+import com.bothash.admissionservice.entity.*;
+import com.bothash.admissionservice.enumpackage.Gender;
+import com.bothash.admissionservice.repository.CourseRepository;
+import com.bothash.admissionservice.service.HscDetailsService;
+import com.bothash.admissionservice.service.SscDetailsService;
 import lombok.RequiredArgsConstructor;
 
 import java.util.ArrayList;
@@ -19,10 +24,6 @@ import org.springframework.web.bind.annotation.*;
 
 import com.bothash.admissionservice.dto.CreateStudentRequest;
 import com.bothash.admissionservice.dto.StudentDto;
-import com.bothash.admissionservice.entity.Address;
-import com.bothash.admissionservice.entity.Guardian;
-import com.bothash.admissionservice.entity.Student;
-import com.bothash.admissionservice.entity.StudentAddress;
 import com.bothash.admissionservice.enumpackage.GuardianRelation;
 import com.bothash.admissionservice.service.StudentService;
 
@@ -32,7 +33,9 @@ import com.bothash.admissionservice.service.StudentService;
 @RequiredArgsConstructor
 public class StudentController {
   private final StudentService studentService;
-
+  private final SscDetailsService sscDetailsService;
+  private final HscDetailsService hscDetailsService;
+    private final CourseRepository courseRepo;
   @PostMapping
   public ResponseEntity<Student> createOrUpdate(@RequestBody CreateStudentRequest req) {
 
@@ -50,7 +53,9 @@ public class StudentController {
 		}
     	 
       }
-      
+     // Course course = courseRepo.findById(req.getCourseCode())
+     //         .orElseThrow(() -> new IllegalArgumentException("Course not found: " + req.getAcademicYearLabel()));
+
       Student student;
       
       // If the student already exists, update their details
@@ -65,6 +70,13 @@ public class StudentController {
           existingStudent.setCaste(req.getCaste());
           existingStudent.setMobile(req.getMobile());
           existingStudent.setAbsId(req.getAbsId());
+          existingStudent.setBloodGroup(req.getBloodGroup());
+          existingStudent.setAge(req.getAge());
+          existingStudent.setBatch(req.getBatch());
+          existingStudent.setRegistrationNumber(req.getRegistrationNumber());
+         // existingStudent.setCourse(course);
+         // existingStudent.setAcademicYearLabel(req.getAcademicYearLabel());
+
 
           // Update address if present
           if (req.getAddressLine1() != null) {
@@ -139,6 +151,8 @@ public class StudentController {
 
 
           student = studentService.createOrUpdateStudent(existingStudent); // Save updated student
+          sscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getSscDetails());
+          hscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getHscDetails());
       } else {
           // If the student doesn't exist, create a new one
           student = Student.builder()
@@ -152,6 +166,12 @@ public class StudentController {
               .caste(req.getCaste())
               .mobile(req.getMobile())
               .absId(req.getAbsId())
+              .bloodGroup(req.getBloodGroup())
+              .age(req.getAge())
+              .batch(req.getBatch())
+              .registrationNumber(req.getRegistrationNumber())
+          //    .course(course)
+          //        .academicYearLabel(req.getAcademicYearLabel())
               .build();
 
           // Add address and guardian if present in the request
@@ -197,6 +217,8 @@ public class StudentController {
           student.setGuardians(gaList);
 
           student = studentService.createOrUpdateStudent(student); // Create new student
+          sscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getSscDetails());
+          hscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getHscDetails());
       }
 
       return ResponseEntity.ok(student);
@@ -237,4 +259,37 @@ public class StudentController {
 	    dto.setMobile(s.getMobile());
 	    return dto;
 	}
+
+
+
+    @GetMapping("/students-filter")
+    public ResponseEntity<Page<StudentDto>> listStudents(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Long courseId,
+            @RequestParam(required = false) String batch,
+            @RequestParam(required = false) Integer academicYear,
+            @RequestParam(required = false) String gender
+    ) {
+
+        Gender genderEnum = null;
+
+        if (gender != null) {
+            genderEnum = Gender.valueOf(gender.toUpperCase());
+        }
+
+        Pageable pageable = PageRequest.of(
+                page,
+                size,
+                Sort.by(Sort.Direction.DESC, "createdAt")
+        );
+
+        Page<Student> students = studentService.getStudents(
+                q, courseId, batch, academicYear, genderEnum, pageable
+        );
+
+        return ResponseEntity.ok(students.map(this::toDto));
+    }
 }
