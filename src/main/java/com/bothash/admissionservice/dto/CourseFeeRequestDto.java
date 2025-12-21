@@ -44,6 +44,8 @@ public class CourseFeeRequestDto {
         private BigDecimal amount;
         private Integer dueDaysFromAdmission;
         private Integer yearNumber; 
+        private Integer dueDayOfMonth; // NEW
+        private Integer dueMonth; 
     }
 
 }

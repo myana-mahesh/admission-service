@@ -50,15 +50,13 @@ public interface Admission2Service {
 
 	Admission2 createAdmission( CreateAdmissionRequest req);
 
-	List<FeeInstallment> upsertInstallments(Long id, List<InstallmentUpsertRequest> items);
+	List<FeeInstallment> upsertInstallments(Long id, List<InstallmentUpsertRequest> items, String role);
 
 	FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
 			LocalDate dueDate, String mode, String receivedBy, String status);
 	
 	Admission2 acknowledgeAdmission(Long id);
 
-	FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
-			LocalDate dueDate, String mode, String receivedBy, String status, Double yearlyFees);
 
 	FeeInstallment recordPayment(Long installmentId, BigDecimal amountPaid, LocalDate paidOn, PaymentModeMaster mode,
 			String txnRef);
@@ -66,4 +64,8 @@ public interface Admission2Service {
 	Admission2 getAdmission(Long admissionId);
 
 	void updateStatus(Long admissionId, AdmissionStatus status);
+
+	FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
+			LocalDate dueDate, String mode, String receivedBy, String status, Double yearlyFeesAmount, String txnRef,
+			String role);
 }

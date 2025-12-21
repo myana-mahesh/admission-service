@@ -14,5 +14,7 @@ public interface FeeInstallmentRepository extends JpaRepository<FeeInstallment, 
 	  List<FeeInstallment> findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(Long admissionId);
 	  Optional<FeeInstallment> findByAdmissionAdmissionIdAndStudyYearAndInstallmentNo(Long admissionId, Integer studyYear, Integer installmentNo);
 	Optional<FeeInstallment> findByInstallmentId(Long installmentId);
-
+	List<FeeInstallment> findByAdmission_AdmissionIdAndStudyYearOrderByInstallmentNoAsc(
+            Long admissionId, Integer studyYear
+    );
 }

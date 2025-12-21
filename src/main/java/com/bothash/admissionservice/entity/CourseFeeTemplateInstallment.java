@@ -28,8 +28,13 @@ public class CourseFeeTemplateInstallment {
     @Column(nullable = false)
     private BigDecimal amount;
 
-    @Column(nullable = false)
-    private Integer dueDaysFromAdmission;
+    
+    @Column(name = "due_day_of_month", nullable = true)
+    private Integer dueDayOfMonth;
+
+    // ✅ NEW: Due month (1..12)
+    @Column(name = "due_month", nullable = true)
+    private Integer dueMonth;
 
     // 🔥 NEW: which academic year this installment belongs to (1..course.years)
     @Column(name = "year_number", nullable = false)

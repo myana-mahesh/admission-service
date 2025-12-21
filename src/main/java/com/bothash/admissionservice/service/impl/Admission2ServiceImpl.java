@@ -64,15 +64,15 @@ public class Admission2ServiceImpl implements Admission2Service {
 		if(a == null) {
 			a = new Admission2();
 			a.setStatus(AdmissionStatus.PENDING);
+			a.setFormDate(req.getFormDate());
 		}
 		a.setStudent(student);
 		a.setYear(year);
 		a.setCourse(course);
-		a.setFormNo(req.getFormNo());
-		a.setFormDate(req.getFormDate());
-		
 		a.setTotalFees(req.getTotalFees());
 		a.setDiscount(req.getDiscount());
+		a.setDiscountRemark(req.getDiscountRemark());
+		a.setDiscountRemarkOther(req.getDiscountRemarkOther());
 		a.setNoOfInstallments(req.getNoOfInstallments());
 		a=admissionRepo.save(a);
 		
@@ -192,7 +192,7 @@ public class Admission2ServiceImpl implements Admission2Service {
 	}
 	@Override
 	public FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
-			LocalDate dueDate, String mode, String receivedBy, String status, Double yearlyFeesAmount) {
+			LocalDate dueDate, String mode, String receivedBy, String status, Double yearlyFeesAmount,String txnRef, String role) {
 		Admission2 a = admissionRepo.findById(admissionId)
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
 		
@@ -220,7 +220,13 @@ public class Admission2ServiceImpl implements Admission2Service {
 						PaymentModeMaster paymentModeMaster = this.service.getByMode(mode);
 						f.setPaymentMode(paymentModeMaster);
 					}
-					f.setStatus(status);
+					f.setTxnRef(txnRef);
+					if(status!=null && status.equalsIgnoreCase("Paid") && role.equalsIgnoreCase("BRANCH_USER")) {
+						f.setStatus("Under Verification");
+					}else {
+						f.setStatus(status);
+					}
+						
 					f.setReceivedBy(receivedBy);
 					
 					return f;
@@ -232,7 +238,13 @@ public class Admission2ServiceImpl implements Admission2Service {
 			PaymentModeMaster paymentModeMaster = this.service.getByMode(mode);
 			fee.setPaymentMode(paymentModeMaster);
 		}
-		fee.setStatus(status);
+		if(status!=null && status.equalsIgnoreCase("Paid") && role.equalsIgnoreCase("BRANCH_USER")) {
+			fee.setStatus("Under Verification");
+		}else if(status!=null){
+			fee.setStatus(status);
+		}
+		
+		fee.setTxnRef(txnRef);
 		fee.setReceivedBy(receivedBy);
 		fee.setAmountDue(amountDue);
 		fee.setDueDate(dueDate);
@@ -242,10 +254,11 @@ public class Admission2ServiceImpl implements Admission2Service {
 
 	@Override
 	  @Transactional
-	  public List<FeeInstallment> upsertInstallments(Long admissionId, List<InstallmentUpsertRequest> items) {
+	  public List<FeeInstallment> upsertInstallments(Long admissionId, List<InstallmentUpsertRequest> items,String role) {
 	    List<FeeInstallment> out = new ArrayList<>(items.size());
 	    for (var it : items) {
-	      out.add(upsertInstallment(admissionId, it.getStudyYear(), it.getInstallmentNo(), it.getAmountDue(), it.getDueDate(),it.getMode(),it.getReceivedBy(),it.getStatus(),it.getYearlyFees()));
+	      out.add(upsertInstallment(admissionId, it.getStudyYear(), it.getInstallmentNo(), it.getAmountDue(), it.getDueDate(),it.getMode(),
+	    		  it.getReceivedBy(),it.getStatus(),it.getYearlyFees(),it.getTxnRef(),role));
 	    }
 	    return out;
 	  }
