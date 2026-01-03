@@ -2,6 +2,7 @@ package com.bothash.admissionservice.service.impl;
 
 import com.bothash.admissionservice.entity.Admission2;
 import com.bothash.admissionservice.entity.FeeInstallment;
+import com.bothash.admissionservice.entity.FeeInstallmentPayment;
 import com.bothash.admissionservice.entity.FeeInvoice;
 import com.bothash.admissionservice.repository.FeeInvoiceRepository;
 import lombok.RequiredArgsConstructor;
@@ -89,6 +90,38 @@ public class InvoiceServiceImpl {
 		} catch (Exception ex) {
 			log.error("Error generating invoice for installment {}: {}", inst.getInstallmentId(), ex.getMessage(), ex);
 			throw new RuntimeException("Failed to generate invoice", ex);
+		}
+	}
+
+	public FeeInvoice generateInvoiceForPayment(Admission2 admission, FeeInstallment inst, FeeInstallmentPayment payment) {
+		if (payment == null) {
+			throw new IllegalArgumentException("Payment is required for invoice generation.");
+		}
+		try {
+			String invoiceNumber = "INV-P-" + admission.getAdmissionId() + "-" + payment.getPaymentId();
+			byte[] pdfBytes = buildPaymentInvoicePdfBytes(admission, inst, payment, invoiceNumber);
+
+			Path dir = Paths.get(invoiceBasePath, String.valueOf(admission.getAdmissionId()));
+			Files.createDirectories(dir);
+
+			String fileName = invoiceNumber + ".pdf";
+			Path filePath = dir.resolve(fileName);
+			Files.write(filePath, pdfBytes);
+
+			String downloadUrl = appBaseUrl + "/api/invoices/download/" + admission.getAdmissionId() + "/" + fileName;
+
+			FeeInvoice inv = new FeeInvoice();
+			inv.setInstallment(inst);
+			inv.setPayment(payment);
+			inv.setInvoiceNumber(invoiceNumber);
+			inv.setFilePath(filePath.toString());
+			inv.setDownloadUrl(downloadUrl);
+			inv.setAmount(payment.getAmount());
+
+			return invoiceRepo.save(inv);
+		} catch (Exception ex) {
+			log.error("Error generating invoice for payment {}: {}", payment.getPaymentId(), ex.getMessage(), ex);
+			throw new RuntimeException("Failed to generate payment invoice", ex);
 		}
 	}
 
@@ -268,6 +301,124 @@ public class InvoiceServiceImpl {
 		}
 
 		return baos.toByteArray();
+	}
+
+	private byte[] buildPaymentInvoicePdfBytes(Admission2 admission, FeeInstallment inst, FeeInstallmentPayment payment,
+			String invoiceNumber) {
+
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		Document document = new Document(PageSize.A4, 36, 36, 60, 36);
+
+		try {
+			PdfWriter.getInstance(document, baos);
+			document.open();
+
+			Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
+			Font subTitleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12);
+			Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10);
+			Font valueFont = FontFactory.getFont(FontFactory.HELVETICA, 10);
+
+			Paragraph collegeName = new Paragraph("ABS EDUCATIONAL SOLUTION", titleFont);
+			collegeName.setAlignment(Element.ALIGN_CENTER);
+			document.add(collegeName);
+
+			Paragraph collegeLine2 = new Paragraph("Authorised Admission & Education Solution Centre", valueFont);
+			collegeLine2.setAlignment(Element.ALIGN_CENTER);
+			document.add(collegeLine2);
+
+			document.add(Chunk.NEWLINE);
+
+			Paragraph receiptTitle = new Paragraph("PARTIAL PAYMENT RECEIPT", subTitleFont);
+			receiptTitle.setAlignment(Element.ALIGN_CENTER);
+			document.add(receiptTitle);
+
+			document.add(Chunk.NEWLINE);
+
+			PdfPTable metaTable = new PdfPTable(2);
+			metaTable.setWidthPercentage(100);
+			metaTable.setWidths(new float[] { 1.2f, 1.8f });
+
+			metaTable.addCell(labelCell("Receipt No."));
+			metaTable.addCell(valueCell(invoiceNumber, valueFont));
+
+			metaTable.addCell(labelCell("Receipt Date"));
+			metaTable.addCell(valueCell(java.time.LocalDate.now().format(DateTimeFormatter.ISO_DATE), valueFont));
+
+			metaTable.addCell(labelCell("Admission ID"));
+			metaTable.addCell(valueCell(
+					admission.getAdmissionId() != null ? admission.getAdmissionId().toString() : "-", valueFont));
+
+			document.add(metaTable);
+			document.add(Chunk.NEWLINE);
+
+			PdfPTable studentTable = new PdfPTable(2);
+			studentTable.setWidthPercentage(100);
+			studentTable.setWidths(new float[] { 1.2f, 1.8f });
+
+			studentTable.addCell(labelCell("Student Name"));
+			studentTable.addCell(valueCell(admission.getStudent().getFullName(), valueFont));
+
+			studentTable.addCell(labelCell("ABS ID"));
+			studentTable.addCell(valueCell(
+					admission.getStudent().getAbsId() != null ? admission.getStudent().getAbsId() : "-", valueFont));
+
+			studentTable.addCell(labelCell("Course"));
+			studentTable.addCell(valueCell(admission.getCourse().getName(), valueFont));
+
+			studentTable.addCell(labelCell("Study Year"));
+			studentTable.addCell(valueCell(String.valueOf(inst.getStudyYear()), valueFont));
+
+			studentTable.addCell(labelCell("Installment No."));
+			studentTable.addCell(valueCell(String.valueOf(inst.getInstallmentNo()), valueFont));
+
+			document.add(studentTable);
+			document.add(Chunk.NEWLINE);
+
+			PdfPTable feeTable = new PdfPTable(4);
+			feeTable.setWidthPercentage(100);
+			feeTable.setWidths(new float[] { 2.8f, 1.2f, 1.3f, 1.2f });
+
+			feeTable.addCell(headerCell("Description"));
+			feeTable.addCell(headerCell("Amount (₹)"));
+			feeTable.addCell(headerCell("Payment Mode"));
+			feeTable.addCell(headerCell("Status"));
+
+			feeTable.addCell(valueCell("Partial Payment", valueFont));
+			feeTable.addCell(valueCell("₹ " + safe(payment.getAmount()), valueFont));
+			feeTable.addCell(valueCell(payment.getPaymentMode() != null ? payment.getPaymentMode().getLabel() : "-", valueFont));
+			feeTable.addCell(valueCell(payment.getStatus() != null ? payment.getStatus() : "-", valueFont));
+
+			document.add(feeTable);
+			document.add(Chunk.NEWLINE);
+
+			PdfPTable footerTable = new PdfPTable(2);
+			footerTable.setWidthPercentage(100);
+			footerTable.setWidths(new float[] { 1.5f, 1.5f });
+
+			PdfPCell leftFooter = new PdfPCell();
+			leftFooter.setBorder(Rectangle.NO_BORDER);
+			leftFooter.addElement(new Paragraph(
+					"Transaction ID: " + (payment.getTxnRef() != null ? payment.getTxnRef() : "-"),
+					valueFont));
+			leftFooter.addElement(new Paragraph(
+					"Received By: " + (payment.getReceivedBy() != null ? payment.getReceivedBy() : "-"),
+					valueFont));
+
+			PdfPCell rightFooter = new PdfPCell();
+			rightFooter.setBorder(Rectangle.NO_BORDER);
+			rightFooter.setHorizontalAlignment(Element.ALIGN_RIGHT);
+			rightFooter.addElement(new Paragraph("Signature", labelFont));
+
+			footerTable.addCell(leftFooter);
+			footerTable.addCell(rightFooter);
+
+			document.add(footerTable);
+
+			document.close();
+			return baos.toByteArray();
+		} catch (DocumentException e) {
+			throw new RuntimeException("Error building payment invoice PDF", e);
+		}
 	}
 
 	/** Small helper methods for nice-looking cells */

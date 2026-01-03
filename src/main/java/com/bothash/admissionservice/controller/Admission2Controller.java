@@ -85,6 +85,15 @@ public class Admission2Controller {
     return ResponseEntity.ok(admissionService.upsertInstallments(id, items,role));
   }
 
+  @PostMapping("/{id}/payments")
+  public ResponseEntity<List<FeeInstallmentPayment>> applyPartialPayment(
+      @PathVariable Long id,
+      @RequestParam String role,
+      @RequestBody PartialPaymentRequest request
+  ) {
+    return ResponseEntity.ok(admissionService.applyPartialPayment(id, request, role));
+  }
+
 
 //  @PostMapping("/installments/{installmentId}/payment")
 //  public ResponseEntity<FeeInstallment> recordPayment(@PathVariable Long installmentId,  @RequestBody PaymentRequest req){
@@ -104,6 +113,15 @@ public class Admission2Controller {
   @PostMapping("/{id}/signoff/counsellor")
   public ResponseEntity<AdmissionSignoff> signCounsellor(@PathVariable Long id){
     return ResponseEntity.ok(admissionService.signByCounsellor(id));
+  }
+
+  @PostMapping("/{id}/college-verification")
+  public ResponseEntity<Admission2> updateCollegeVerification(
+          @PathVariable Long id,
+          @RequestParam String status,
+          @RequestParam String actor
+  ) {
+    return ResponseEntity.ok(admissionService.updateCollegeVerification(id, status, actor));
   }
 
   @GetMapping

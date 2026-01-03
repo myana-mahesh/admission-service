@@ -8,10 +8,12 @@ import java.util.Optional;
 import com.bothash.admissionservice.dto.CreateAdmissionRequest;
 import com.bothash.admissionservice.dto.InstallmentUpsertRequest;
 import com.bothash.admissionservice.dto.MultipleUploadRequest;
+import com.bothash.admissionservice.dto.PartialPaymentRequest;
 import com.bothash.admissionservice.entity.Admission2;
 import com.bothash.admissionservice.entity.AdmissionDocument;
 import com.bothash.admissionservice.entity.AdmissionSignoff;
 import com.bothash.admissionservice.entity.FeeInstallment;
+import com.bothash.admissionservice.entity.FeeInstallmentPayment;
 import com.bothash.admissionservice.entity.FileUpload;
 import com.bothash.admissionservice.entity.PaymentModeMaster;
 import com.bothash.admissionservice.enumpackage.AdmissionStatus;
@@ -51,11 +53,13 @@ public interface Admission2Service {
 	Admission2 createAdmission( CreateAdmissionRequest req);
 
 	List<FeeInstallment> upsertInstallments(Long id, List<InstallmentUpsertRequest> items, String role);
+	List<FeeInstallmentPayment> applyPartialPayment(Long admissionId, PartialPaymentRequest request, String role);
 
 	FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
 			LocalDate dueDate, String mode, String receivedBy, String status);
 	
 	Admission2 acknowledgeAdmission(Long id);
+	Admission2 updateCollegeVerification(Long admissionId, String status, String actor);
 
 
 	FeeInstallment recordPayment(Long installmentId, BigDecimal amountPaid, LocalDate paidOn, PaymentModeMaster mode,

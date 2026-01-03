@@ -3,10 +3,12 @@ package com.bothash.admissionservice.service.impl;
 import com.bothash.admissionservice.entity.Admission2;
 import com.bothash.admissionservice.entity.FeeInstallment;
 import com.bothash.admissionservice.entity.FeeInvoice;
+import com.bothash.admissionservice.entity.FeeInstallmentPayment;
 import com.bothash.admissionservice.entity.FileUpload;
 import com.bothash.admissionservice.repository.FeeInstallmentRepository;
 import com.bothash.admissionservice.repository.FeeInvoiceRepository;
 import com.bothash.admissionservice.repository.FileUploadRepository;
+import com.bothash.admissionservice.repository.FeeInstallmentPaymentRepository;
 
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -31,29 +33,87 @@ public class FeeInstallmentServiceImpl {
     
     private final FeeInvoiceRepository invoiceRepo;
     private final FileUploadRepository uploadRepo;
+    private final FeeInstallmentPaymentRepository paymentRepo;
 
     @Transactional
     public FeeInstallment updateStatus(Long installmentId, String newStatus) {
         FeeInstallment inst = installmentRepo.findById(installmentId)
                 .orElseThrow(() -> new IllegalArgumentException("Installment not found: " + installmentId));
 
-        String oldStatus = "";
-        inst.setStatus(newStatus);
-        // set paidOn if becoming Paid (optional)
-        if ("Paid".equalsIgnoreCase(newStatus) && inst.getPaidOn() == null) {
-            inst.setPaidOn(java.time.LocalDate.now());
-            inst.setIsVerified(true);
+        if ("Paid".equalsIgnoreCase(newStatus)) {
+            var amountDue = inst.getAmountDue() == null ? java.math.BigDecimal.ZERO : inst.getAmountDue();
+            var amountPaid = inst.getAmountPaid() == null ? java.math.BigDecimal.ZERO : inst.getAmountPaid();
+            var hasPayment = amountPaid.compareTo(java.math.BigDecimal.ZERO) > 0;
+            var fullyPaid = amountPaid.compareTo(amountDue) >= 0 && amountDue.compareTo(java.math.BigDecimal.ZERO) > 0;
+            String resolvedStatus = hasPayment ? (fullyPaid ? "Paid" : "Partial Received") : "Under Verification";
+            inst.setStatus(resolvedStatus);
+            inst.setIsVerified(hasPayment);
+            if (fullyPaid && inst.getPaidOn() == null) {
+                inst.setPaidOn(java.time.LocalDate.now());
+            }
+        } else {
+            inst.setStatus(newStatus);
         }
 
         FeeInstallment saved = installmentRepo.save(inst);
 
         // Only when changing from non-paid → Paid
-        if ("Paid".equalsIgnoreCase(newStatus)) {
+        if ("Paid".equalsIgnoreCase(saved.getStatus())) {
             Admission2 admission = saved.getAdmission();
             FeeInvoice invoice = invoiceService.generateInvoiceForInstallment(admission, saved);
             log.info("Generated invoice {} for installment {}", invoice.getInvoiceNumber(), installmentId);
         }
 
+        return saved;
+    }
+
+    @Transactional
+    public FeeInstallment verifyPayment(Long paymentId, String actor) {
+        var payment = paymentRepo.findById(paymentId)
+                .orElseThrow(() -> new IllegalArgumentException("Payment not found: " + paymentId));
+
+        if (Boolean.TRUE.equals(payment.getIsVerified())) {
+            return payment.getInstallment();
+        }
+
+        payment.setIsVerified(true);
+        payment.setVerifiedBy(actor);
+        payment.setVerifiedAt(java.time.LocalDateTime.now());
+
+        FeeInstallment installment = payment.getInstallment();
+        var verifiedPayments = paymentRepo.findByInstallment_InstallmentIdOrderByCreatedAtAsc(
+                installment.getInstallmentId());
+        java.math.BigDecimal verifiedSum = java.math.BigDecimal.ZERO;
+        for (var p : verifiedPayments) {
+            if (Boolean.TRUE.equals(p.getIsVerified()) && p.getAmount() != null) {
+                verifiedSum = verifiedSum.add(p.getAmount());
+            }
+        }
+        var amountDue = installment.getAmountDue() == null ? java.math.BigDecimal.ZERO : installment.getAmountDue();
+        boolean fullyPaid = verifiedSum.compareTo(amountDue) >= 0 && amountDue.compareTo(java.math.BigDecimal.ZERO) > 0;
+        String newStatus = fullyPaid ? "Paid" : "Partial Received";
+        installment.setStatus(newStatus);
+        installment.setIsVerified(verifiedSum.compareTo(java.math.BigDecimal.ZERO) > 0);
+        if (fullyPaid && installment.getPaidOn() == null) {
+            installment.setPaidOn(java.time.LocalDate.now());
+        }
+
+        payment.setStatus("Paid");
+        paymentRepo.save(payment);
+        FeeInstallment saved = installmentRepo.save(installment);
+        if (!invoiceRepo.existsByPayment_PaymentId(paymentId)) {
+            Admission2 admission = saved.getAdmission();
+            FeeInvoice invoice = invoiceService.generateInvoiceForPayment(admission, saved, payment);
+            log.info("Generated invoice {} for payment {}", invoice.getInvoiceNumber(), paymentId);
+        }
+        if (fullyPaid) {
+            boolean hasInvoice = !invoiceRepo.findByInstallment_InstallmentId(saved.getInstallmentId()).isEmpty();
+            if (!hasInvoice) {
+                Admission2 admission = saved.getAdmission();
+                FeeInvoice invoice = invoiceService.generateInvoiceForInstallment(admission, saved);
+                log.info("Generated invoice {} for installment {}", invoice.getInvoiceNumber(), saved.getInstallmentId());
+            }
+        }
         return saved;
     }
     

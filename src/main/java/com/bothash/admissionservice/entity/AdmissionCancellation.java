@@ -36,6 +36,9 @@ public class AdmissionCancellation {
     // File proof - it will link with your FileUpload table
     private String refundProofFileName;
 
+    // File proof - it will link with your FileUpload table
+    private String studentAcknowledgementProofFileName;
+
     @CreationTimestamp
     private LocalDateTime createdOn;
 

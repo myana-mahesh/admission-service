@@ -1,5 +1,7 @@
 package com.bothash.admissionservice.entity;
 
+import java.time.OffsetDateTime;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -46,4 +48,12 @@ public class CollegeCourse extends Auditable {
 
     @Column(nullable = false)
     private Integer totalSeats;
+
+    @Column(nullable = false)
+    private Integer onHoldSeats = 0;
+
+    @Column(nullable = false)
+    private Integer allocatedSeats = 0;
+
+    private OffsetDateTime lastAllocatedAt;
 }

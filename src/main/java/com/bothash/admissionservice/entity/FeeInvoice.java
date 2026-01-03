@@ -23,6 +23,10 @@ public class FeeInvoice {
     @JoinColumn(name = "installment_id", nullable = false)
     private FeeInstallment installment;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "payment_id")
+    private FeeInstallmentPayment payment;
+
     @Column(name = "invoice_number", nullable = false, unique = true)
     private String invoiceNumber;
 

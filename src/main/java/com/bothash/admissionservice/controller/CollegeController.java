@@ -2,6 +2,8 @@ package com.bothash.admissionservice.controller;
 
 import java.util.List;
 
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.bothash.admissionservice.dto.CollegeDto;
+import com.bothash.admissionservice.dto.CollegeCourseSeatDto;
 import com.bothash.admissionservice.service.impl.CollegeService;
 
 import lombok.RequiredArgsConstructor;
@@ -33,6 +36,11 @@ public class CollegeController {
         return collegeService.getById(collegeId);
     }
 
+    @GetMapping("/{collegeId}/course-seats")
+    public List<CollegeCourseSeatDto> getCourseSeats(@PathVariable Long collegeId) {
+        return collegeService.getCourseSeatSummary(collegeId);
+    }
+
     @PostMapping
     public CollegeDto create(@RequestBody CollegeDto dto) {
         dto.setCollegeId(null);
@@ -46,8 +54,18 @@ public class CollegeController {
     }
 
     @DeleteMapping("/{collegeId}")
-    public ResponseEntity<Void> delete(@PathVariable Long collegeId) {
-        collegeService.delete(collegeId);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<String> delete(@PathVariable Long collegeId) {
+        try {
+            collegeService.delete(collegeId);
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
+        } catch (DataIntegrityViolationException ex) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Cannot delete this college because admissions already exist for it.");
+        } catch (Exception ex) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Unable to delete the college.");
+        }
     }
 }

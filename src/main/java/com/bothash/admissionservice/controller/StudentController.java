@@ -1,5 +1,13 @@
 package com.bothash.admissionservice.controller;
 
+import com.bothash.admissionservice.entity.*;
+import com.bothash.admissionservice.enumpackage.Gender;
+import com.bothash.admissionservice.repository.CourseRepository;
+import com.bothash.admissionservice.repository.Admission2Repository;
+import com.bothash.admissionservice.repository.StudentsPersMappingRepository;
+import com.bothash.admissionservice.service.HscDetailsService;
+import com.bothash.admissionservice.service.SscDetailsService;
+import com.bothash.admissionservice.service.StudentOtherPaymentValueService;
 import lombok.RequiredArgsConstructor;
 
 import java.util.ArrayList;
@@ -14,15 +22,12 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import com.bothash.admissionservice.dto.CreateStudentRequest;
 import com.bothash.admissionservice.dto.StudentDto;
-import com.bothash.admissionservice.entity.Address;
-import com.bothash.admissionservice.entity.Guardian;
-import com.bothash.admissionservice.entity.Student;
-import com.bothash.admissionservice.entity.StudentAddress;
 import com.bothash.admissionservice.enumpackage.GuardianRelation;
 import com.bothash.admissionservice.service.StudentService;
 
@@ -32,7 +37,12 @@ import com.bothash.admissionservice.service.StudentService;
 @RequiredArgsConstructor
 public class StudentController {
   private final StudentService studentService;
-
+  private final SscDetailsService sscDetailsService;
+  private final HscDetailsService hscDetailsService;
+    private final CourseRepository courseRepo;
+  private final Admission2Repository admission2Repository;
+  private final StudentsPersMappingRepository studentsPersMappingRepository;
+  private final StudentOtherPaymentValueService studentOtherPaymentValueService;
   @PostMapping
   public ResponseEntity<Student> createOrUpdate(@RequestBody CreateStudentRequest req) {
 
@@ -50,7 +60,15 @@ public class StudentController {
 		}
     	 
       }
-      
+      Course course = null;
+      if (req.getCourseCode() != null) {
+          course = courseRepo.findById(req.getCourseCode()).orElse(null);
+      }
+
+      String registrationNumber = StringUtils.hasText(req.getRegistrationNumber())
+              ? req.getRegistrationNumber().trim()
+              : null;
+
       Student student;
       
       // If the student already exists, update their details
@@ -64,12 +82,22 @@ public class StudentController {
           existingStudent.setReligion(req.getReligion());
           existingStudent.setCaste(req.getCaste());
           existingStudent.setMobile(req.getMobile());
-          existingStudent.setAbsId(req.getAbsId());
+          if (StringUtils.hasText(req.getAbsId())) {
+              existingStudent.setAbsId(req.getAbsId());
+          }
+          existingStudent.setBloodGroup(req.getBloodGroup());
+          existingStudent.setAge(req.getAge());
+          existingStudent.setBatch(req.getBatch());
+          existingStudent.setRegistrationNumber(registrationNumber);
+          existingStudent.setCourse(course);
+         // existingStudent.setAcademicYearLabel(req.getAcademicYearLabel());
+
 
           // Update address if present
           if (req.getAddressLine1() != null) {
               Address addr = Address.builder()
                   .line1(req.getAddressLine1())
+                  .area(req.getArea())
                   .city(req.getCity())
                   .state(req.getState())
                   .pincode(req.getPincode())
@@ -139,9 +167,12 @@ public class StudentController {
 
 
           student = studentService.createOrUpdateStudent(existingStudent); // Save updated student
+          sscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getSscDetails());
+          hscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getHscDetails());
+          studentOtherPaymentValueService.saveValues(student.getStudentId(), req.getOtherPayments());
       } else {
           // If the student doesn't exist, create a new one
-          student = Student.builder()
+          Student.StudentBuilder builder = Student.builder()
               .fullName(req.getFullName())
               .dob(req.getDob())
               .gender(req.getGender())
@@ -151,13 +182,21 @@ public class StudentController {
               .religion(req.getReligion())
               .caste(req.getCaste())
               .mobile(req.getMobile())
-              .absId(req.getAbsId())
-              .build();
+              .bloodGroup(req.getBloodGroup())
+              .age(req.getAge())
+              .batch(req.getBatch())
+              .registrationNumber(registrationNumber)
+              .course(course);
+          if (StringUtils.hasText(req.getAbsId())) {
+              builder.absId(req.getAbsId());
+          }
+          student = builder.build();
 
           // Add address and guardian if present in the request
           if (req.getAddressLine1() != null) {
               Address addr = Address.builder()
                   .line1(req.getAddressLine1())
+                  .area(req.getArea())
                   .city(req.getCity())
                   .state(req.getState())
                   .pincode(req.getPincode())
@@ -197,6 +236,9 @@ public class StudentController {
           student.setGuardians(gaList);
 
           student = studentService.createOrUpdateStudent(student); // Create new student
+          sscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getSscDetails());
+          hscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getHscDetails());
+          studentOtherPaymentValueService.saveValues(student.getStudentId(), req.getOtherPayments());
       }
 
       return ResponseEntity.ok(student);
@@ -235,6 +277,84 @@ public class StudentController {
 	    dto.setCaste(s.getCaste());
 	    dto.setEmail(s.getEmail());
 	    dto.setMobile(s.getMobile());
+	    dto.setAge(s.getAge());
+	    dto.setBatch(s.getBatch());
+	    dto.setRegistrationNumber(s.getRegistrationNumber());
+	    if (s.getCourse() != null) {
+	        dto.setCourseId(s.getCourse().getCourseId());
+	        dto.setCourseName(s.getCourse().getName());
+	    }
 	    return dto;
 	}
+
+
+
+    @GetMapping("/students-filter")
+    public ResponseEntity<Page<StudentDto>> listStudents(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Long courseId,
+            @RequestParam(required = false) Long collegeId,
+            @RequestParam(required = false) Long admissionYearId,
+            @RequestParam(required = false) String batch,
+            @RequestParam(required = false) Long perkId,
+            @RequestParam(required = false) String gender
+    ) {
+
+        Gender genderEnum = null;
+
+        if (gender != null) {
+            for (Gender g : Gender.values()) {
+                if (g.name().equalsIgnoreCase(gender)) {
+                    genderEnum = g;
+                    break;
+                }
+            }
+        }
+
+        Pageable pageable = PageRequest.of(
+                page,
+                size,
+                Sort.by(Sort.Direction.DESC, "createdAt")
+        );
+
+        List<Long> admissionFilteredIds = null;
+        if (collegeId != null || courseId != null || admissionYearId != null) {
+            admissionFilteredIds = admission2Repository.findStudentIdsByFilters(
+                    collegeId, courseId, admissionYearId
+            );
+            if (admissionFilteredIds.isEmpty()) {
+                return ResponseEntity.ok(Page.empty(pageable));
+            }
+        }
+
+        List<Long> perkFilteredIds = null;
+        if (perkId != null) {
+            perkFilteredIds = studentsPersMappingRepository.findStudentIdsByPerkId(perkId);
+            if (perkFilteredIds.isEmpty()) {
+                return ResponseEntity.ok(Page.empty(pageable));
+            }
+        }
+
+        List<Long> finalIds = null;
+        if (admissionFilteredIds != null && perkFilteredIds != null) {
+            finalIds = admissionFilteredIds.stream()
+                    .filter(perkFilteredIds::contains)
+                    .toList();
+            if (finalIds.isEmpty()) {
+                return ResponseEntity.ok(Page.empty(pageable));
+            }
+        } else if (admissionFilteredIds != null) {
+            finalIds = admissionFilteredIds;
+        } else if (perkFilteredIds != null) {
+            finalIds = perkFilteredIds;
+        }
+        Page<Student> students = studentService.getStudents(
+                q, batch, genderEnum, finalIds, pageable
+        );
+
+        return ResponseEntity.ok(students.map(this::toDto));
+    }
 }

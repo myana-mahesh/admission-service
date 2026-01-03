@@ -28,7 +28,8 @@ import lombok.Setter;
 @Entity
 @Table(name = "file_upload",
        indexes = {
-           @Index(name = "idx_upload_adm_doctype", columnList = "admission_id,doc_type_id")
+           @Index(name = "idx_upload_adm_doctype", columnList = "admission_id,doc_type_id"),
+           @Index(name = "idx_upload_installment_payment", columnList = "installment_payment_id")
        })
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class FileUpload extends Auditable {
@@ -47,6 +48,10 @@ public class FileUpload extends Auditable {
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "installment_id")
     private FeeInstallment installment; 
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "installment_payment_id")
+    private FeeInstallmentPayment installmentPayment;
 
     @Column(length = 500, nullable = false)
     private String filename;

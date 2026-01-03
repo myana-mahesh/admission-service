@@ -20,6 +20,11 @@ public class StudentDto {
     private String caste;
     private String email;
     private String mobile;
+    private Integer age;
+    private String batch;
+    private String registrationNumber;
+    private Long courseId;
+    private String courseName;
     private List<GuardianDto> guardians;
     private List<StudentAddressDto> addresses;
 }

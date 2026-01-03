@@ -1,13 +1,14 @@
 package com.bothash.admissionservice.service.impl;
 
 import com.bothash.admissionservice.dto.StudentDto;
-import com.bothash.admissionservice.dto.StudentDto;
 import com.bothash.admissionservice.entity.Student;
+import com.bothash.admissionservice.enumpackage.Gender;
 import com.bothash.admissionservice.repository.StudentRepository;
 import com.bothash.admissionservice.service.StudentService;
 
 import lombok.RequiredArgsConstructor;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.domain.Page;
@@ -71,6 +72,39 @@ public class StudentServiceImpl implements StudentService {
 	    dto.setCaste(s.getCaste());
 	    dto.setEmail(s.getEmail());
 	    dto.setMobile(s.getMobile());
+	    dto.setAge(s.getAge());
+	    dto.setBatch(s.getBatch());
+	    dto.setRegistrationNumber(s.getRegistrationNumber());
+	    if (s.getCourse() != null) {
+	        dto.setCourseId(s.getCourse().getCourseId());
+	        dto.setCourseName(s.getCourse().getName());
+	    }
 	    return dto;
 	}
+
+	@Override
+	public Page<Student> getStudents(
+			String q,
+			Long courseId,
+			String batch,
+			Integer academicYear,
+			Gender gender,
+			Pageable pageable
+	) {
+		/*return studentRepo.findWithFilters(
+				q, courseId, batch, academicYear, gender, pageable
+		);*/
+		return studentRepo.findWithFilters(
+				q, batch, gender, pageable
+		);
+	}
+
+	@Override
+	public Page<Student> getStudents(String q, String batch, Gender gender, List<Long> studentIds, Pageable pageable) {
+		if (studentIds == null) {
+			return studentRepo.findWithFilters(q, batch, gender, pageable);
+		}
+		return studentRepo.findWithFiltersAndIds(q, batch, gender, studentIds, pageable);
+	}
+
 }

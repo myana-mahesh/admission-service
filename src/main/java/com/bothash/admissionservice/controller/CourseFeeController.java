@@ -2,6 +2,10 @@ package com.bothash.admissionservice.controller;
 
 import java.util.List;
 
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,5 +49,21 @@ public class CourseFeeController {
     public List<CourseFeeRequestDto> getAllCoursesWithFee() {
         return courseService.getAllCoursesWithFee();
     }
-}
 
+    @DeleteMapping("/{courseId}")
+    public ResponseEntity<String> deleteCourse(@PathVariable Long courseId) {
+        try {
+            courseService.deleteCourse(courseId);
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ex.getMessage());
+        } catch (DataIntegrityViolationException ex) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Cannot delete this course because admissions already exist for it.");
+        } catch (Exception ex) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Unable to delete the course.");
+        }
+    }
+}

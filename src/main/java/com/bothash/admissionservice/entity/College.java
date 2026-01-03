@@ -23,7 +23,7 @@ import lombok.Setter;
 @Entity
 @Table(name = "college",
        indexes = { @Index(name = "uk_college_code", columnList = "code", unique = true) })
-@JsonIgnoreProperties({"courses"})
+@JsonIgnoreProperties({"courses", "hibernateLazyInitializer", "handler"})
 @Getter
 @Setter
 @NoArgsConstructor

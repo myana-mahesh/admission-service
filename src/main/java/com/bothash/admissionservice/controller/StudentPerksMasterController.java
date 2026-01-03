@@ -3,6 +3,8 @@ package com.bothash.admissionservice.controller;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -65,8 +67,16 @@ public class StudentPerksMasterController {
 
     // DELETE perk
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deletePerk(@PathVariable Long id) {
-        perksService.deletePerk(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<String> deletePerk(@PathVariable Long id) {
+        try {
+            perksService.deletePerk(id);
+            return ResponseEntity.noContent().build();
+        } catch (DataIntegrityViolationException ex) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Cannot delete this perk because admissions already exist for it.");
+        } catch (Exception ex) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Unable to delete the perk.");
+        }
     }
 }

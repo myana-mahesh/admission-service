@@ -32,7 +32,15 @@ import lombok.Setter;
 @Entity
 @Table(name = "fee_installment",
        uniqueConstraints = @UniqueConstraint(name = "uk_fee_unique", columnNames = {"admission_id","study_year","installment_no"}),
-       indexes = { @Index(name = "idx_fee_due", columnList = "due_date,amount_due") })
+       indexes = {
+           @Index(name = "idx_fee_due", columnList = "due_date,amount_due"),
+           @Index(name = "idx_fee_admission", columnList = "admission_id"),
+           @Index(name = "idx_fee_status", columnList = "status"),
+           @Index(name = "idx_fee_created", columnList = "created_at"),
+           @Index(name = "idx_fee_paid_on", columnList = "paid_on"),
+           @Index(name = "idx_fee_payment_mode", columnList = "payment_mode_id"),
+           @Index(name = "idx_fee_verified", columnList = "is_verified")
+       })
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class FeeInstallment extends Auditable {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)

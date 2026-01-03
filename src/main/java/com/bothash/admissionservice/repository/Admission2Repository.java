@@ -7,9 +7,11 @@ import java.util.Optional;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import com.bothash.admissionservice.entity.Admission2;
+import com.bothash.admissionservice.enumpackage.AdmissionStatus;
 
 @Repository
 public interface Admission2Repository extends JpaRepository<Admission2, Long> {
@@ -24,5 +26,18 @@ public interface Admission2Repository extends JpaRepository<Admission2, Long> {
 	  Optional<Admission2> findByStudentStudentIdAndYearYearId(Long studentId, Long yearId);
 
 	Admission2 findByStudentStudentIdAndYearYearIdAndCourseCourseId(Long studentId, Long yearId, Long courseId);
+
+	long countByCollegeCollegeIdAndCourseCourseIdAndStatus(Long collegeId, Long courseId, AdmissionStatus status);
+
+	@Query("""
+	    select distinct a.student.studentId
+	    from Admission2 a
+	    where (:collegeId is null or a.college.collegeId = :collegeId)
+	      and (:courseId is null or a.course.courseId = :courseId)
+	      and (:yearId is null or a.year.yearId = :yearId)
+	    """)
+	List<Long> findStudentIdsByFilters(@Param("collegeId") Long collegeId,
+	                                   @Param("courseId") Long courseId,
+	                                   @Param("yearId") Long yearId);
 
 }

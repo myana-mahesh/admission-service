@@ -13,6 +13,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import com.bothash.admissionservice.enumpackage.AdmissionStatus;
+import com.bothash.admissionservice.enumpackage.CollegeVerificationStatus;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 
@@ -39,7 +40,13 @@ import lombok.Setter;
 @Table(name = "admission2",
        indexes = {
            @Index(name = "idx_adm_course_year", columnList = "course_id,year_id"),
-           @Index(name = "idx_adm_student_year", columnList = "student_id,year_id")
+           @Index(name = "idx_adm_student_year", columnList = "student_id,year_id"),
+           @Index(name = "idx_adm_status_created", columnList = "status,created_at"),
+           @Index(name = "idx_adm_course_created", columnList = "course_id,created_at"),
+           @Index(name = "idx_adm_college_created", columnList = "college_id,created_at"),
+           @Index(name = "idx_adm_batch_created", columnList = "batch,created_at"),
+           @Index(name = "idx_adm_year_created", columnList = "year_id,created_at"),
+           @Index(name = "idx_adm_branch_approved", columnList = "branch_approved")
        })
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class Admission2 extends Auditable {
@@ -49,6 +56,7 @@ public class Admission2 extends Auditable {
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "student_id", nullable = false)
+    @JsonManagedReference
     private Student student;
 
     @ManyToOne(fetch = FetchType.EAGER)
@@ -101,6 +109,31 @@ public class Admission2 extends Auditable {
     @Column(length = 10)
     private AdmissionStatus status = AdmissionStatus.Draft;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "college_verification_status", length = 20)
+    private CollegeVerificationStatus collegeVerificationStatus;
+
+    @Column(name = "college_verified_by", length = 120)
+    private String collegeVerifiedBy;
+
+    @Column(name = "college_verified_at")
+    private LocalDateTime collegeVerifiedAt;
+
+    @Column(name = "college_rejected_by", length = 120)
+    private String collegeRejectedBy;
+
+    @Column(name = "college_rejected_at")
+    private LocalDateTime collegeRejectedAt;
+
+    @Column(name = "branch_approved", nullable = false, columnDefinition = "boolean default false")
+    private Boolean branchApproved = false;
+
+    @Column(name = "branch_approved_by", length = 120)
+    private String branchApprovedBy;
+
+    @Column(name = "branch_approved_at")
+    private LocalDateTime branchApprovedAt;
+
     // Convenience relations
 //    @OneToMany(mappedBy = "admission", cascade = CascadeType.ALL, orphanRemoval = true)
 //    private List<AdmissionDocument> documents = new ArrayList<>();
@@ -127,4 +160,30 @@ public class Admission2 extends Auditable {
     @OneToOne(mappedBy = "admission", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @JsonManagedReference("admission-cancellation")
     private AdmissionCancellation cancellation;
+
+/*    // 🔥 INVERSE SIDE
+    @OneToOne(mappedBy = "admission", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private SscDetails sscDetails;
+
+    @OneToOne(mappedBy = "admission", cascade = CascadeType.ALL, orphanRemoval = true)
+    private HscDetails hscDetails;*/
+
+    @Column(name = "batch")
+    private String batch;
+
+    @Column(name = "registration_number", unique = true)
+    private String registrationNumber;
+
+    private String referenceName;
+
+    // Admission taken at
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "admission_branch_id")
+    private BranchMaster admissionBranch;
+
+    // Lecture attended at
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "lecture_branch_id")
+    private BranchMaster lectureBranch;
+
 }

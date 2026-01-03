@@ -16,6 +16,8 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -25,6 +27,7 @@ import lombok.Setter;
 @Entity
 @Table(name = "course",
        indexes = { @Index(name = "uk_course_code", columnList = "code", unique = true) })
+@JsonIgnoreProperties({"courseFeeTemplate", "hibernateLazyInitializer", "handler"})
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
  public class Course extends Auditable {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -53,4 +56,3 @@ import lombok.Setter;
     
     
 }
-

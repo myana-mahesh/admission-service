@@ -192,4 +192,11 @@ public class CourseServiceImpl {
                 .map(this::mapToDto)
                 .collect(Collectors.toList());
     }
+
+    @Transactional
+    public void deleteCourse(Long courseId) {
+        Course course = courseRepository.findById(courseId)
+                .orElseThrow(() -> new IllegalArgumentException("Course not found: " + courseId));
+        courseRepository.delete(course);
+    }
 }

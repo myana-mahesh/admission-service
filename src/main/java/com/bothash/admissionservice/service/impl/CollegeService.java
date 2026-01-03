@@ -11,6 +11,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import com.bothash.admissionservice.dto.CollegeDto;
+import com.bothash.admissionservice.dto.CollegeCourseSeatDto;
 import com.bothash.admissionservice.entity.College;
 import com.bothash.admissionservice.entity.CollegeCourse;
 import com.bothash.admissionservice.entity.Course;
@@ -60,7 +61,10 @@ public class CollegeService {
         college.setCode(dto.getCode());
         college.setName(dto.getName());
 
-        List<CollegeCourse> existing = college.getCourses() == null ? List.of() : college.getCourses();
+        if (college.getCourses() == null) {
+            college.setCourses(new ArrayList<>());
+        }
+        List<CollegeCourse> existing = college.getCourses();
         Map<Long, CollegeCourse> existingByCourseId = new HashMap<>();
         for (CollegeCourse cc : existing) {
             if (cc.getCourse() != null && cc.getCourse().getCourseId() != null) {
@@ -89,13 +93,48 @@ public class CollegeService {
             }
         }
 
-        college.setCourses(updated);
+        college.getCourses().clear();
+        college.getCourses().addAll(updated);
         College saved = collegeRepository.save(college);
         return mapToDto(saved);
     }
 
     public void delete(Long collegeId) {
         collegeRepository.deleteById(collegeId);
+    }
+
+    @Transactional
+    public List<CollegeCourseSeatDto> getCourseSeatSummary(Long collegeId) {
+        College college = collegeRepository.findById(collegeId)
+                .orElseThrow(() -> new IllegalArgumentException("College not found: " + collegeId));
+
+        if (college.getCourses() == null) {
+            return List.of();
+        }
+
+        return college.getCourses().stream()
+                .map(cc -> {
+                    Long courseId = cc.getCourse() != null ? cc.getCourse().getCourseId() : null;
+                    if (courseId == null) {
+                        return null;
+                    }
+                    int onHold = cc.getOnHoldSeats() == null ? 0 : cc.getOnHoldSeats();
+                    int utilized = cc.getAllocatedSeats() == null ? 0 : cc.getAllocatedSeats();
+                    int total = cc.getTotalSeats() == null ? 0 : cc.getTotalSeats();
+                    int remaining = Math.max(0, total - (onHold + utilized));
+
+                    return CollegeCourseSeatDto.builder()
+                            .courseId(courseId)
+                            .courseCode(cc.getCourse().getCode())
+                            .courseName(cc.getCourse().getName())
+                            .totalSeats(total)
+                            .onHoldSeats(onHold)
+                            .utilizedSeats(utilized)
+                            .remainingSeats(remaining)
+                            .build();
+                })
+                .filter(x -> x != null)
+                .toList();
     }
 
     private CollegeDto mapToDto(College college) {

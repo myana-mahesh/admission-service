@@ -26,4 +26,6 @@ public class DocumentType extends Auditable {
 
     @Column(length = 120, nullable = false)
     private String name;
+    
+    private Boolean isMainDoc;
 }

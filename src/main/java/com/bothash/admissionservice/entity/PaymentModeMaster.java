@@ -1,5 +1,6 @@
 package com.bothash.admissionservice.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -10,6 +11,7 @@ import lombok.*;
 
 @Entity
 @Table(name = "payment_mode")
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class PaymentModeMaster {
 
@@ -29,4 +31,3 @@ public class PaymentModeMaster {
     @Column(nullable = false)
     private int displayOrder = 0;
 }
-

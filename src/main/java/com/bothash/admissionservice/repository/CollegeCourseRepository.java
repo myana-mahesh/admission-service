@@ -8,4 +8,6 @@ import com.bothash.admissionservice.entity.CollegeCourse;
 
 public interface CollegeCourseRepository extends JpaRepository<CollegeCourse, Long> {
     List<CollegeCourse> findByCollegeCollegeId(Long collegeId);
+
+    java.util.Optional<CollegeCourse> findByCollegeCollegeIdAndCourseCourseId(Long collegeId, Long courseId);
 }

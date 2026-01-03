@@ -9,5 +9,6 @@ public class CancelAdmissionDTO {
     private String remark;
     private String handlingPerson;
     private String refundProofFileName;
+    private String studentAcknowledgementProofFileName;
     private String role;
 }

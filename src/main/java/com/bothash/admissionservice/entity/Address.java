@@ -23,6 +23,9 @@ public class Address extends Auditable {
     @Column(length = 200)
     private String line1;
 
+    @Column(length = 120)
+    private String area;
+
     @Column(length = 80)
     private String city;
 
@@ -32,4 +35,3 @@ public class Address extends Auditable {
     @Column(length = 6)
     private String pincode;
 }
-

@@ -17,5 +17,7 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
 	
     long deleteByInstallment_InstallmentId(Long installmentId);
 	List<FileUpload> findByInstallment_InstallmentId(Long installmentId);
+	List<FileUpload> findByInstallment_InstallmentIdIn(List<Long> installmentIds);
+	List<FileUpload> findByInstallmentPayment_PaymentIdIn(List<Long> paymentIds);
 
 }
