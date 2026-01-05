@@ -50,8 +50,9 @@ public class FeeLedgerService {
     public FeeLedgerResponseDto search(
             String q,
             List<Long> branchIds,
-            Long courseId,
+            List<Long> courseIds,
             String batch,
+            List<String> batchCodes,
             Long academicYearId,
             LocalDate startDate,
             LocalDate endDate,
@@ -69,14 +70,14 @@ public class FeeLedgerService {
             Pageable pageable
     ) {
         FeeLedgerSummaryDto summary = querySummary(
-                q, branchIds, courseId, batch, academicYearId,
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount, pendingMin, pendingMax
         );
 
         AdmissionPage admissionPage = queryAdmissionsPage(
-                q, branchIds, courseId, batch, academicYearId,
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount, pendingMin, pendingMax, pageable
@@ -180,8 +181,9 @@ public class FeeLedgerService {
     private AdmissionPage queryAdmissionsPage(
             String q,
             List<Long> branchIds,
-            Long courseId,
+            List<Long> courseIds,
             String batch,
+            List<String> batchCodes,
             Long academicYearId,
             LocalDate startDate,
             LocalDate endDate,
@@ -211,7 +213,7 @@ public class FeeLedgerService {
 
         List<Predicate> predicates = buildPredicates(
                 cq, cb, root, admission, student, course, year, branch, paymentMode,
-                q, branchIds, courseId, batch, academicYearId,
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount, pendingMin, pendingMax
@@ -315,7 +317,7 @@ public class FeeLedgerService {
 
         List<Predicate> countPredicates = buildPredicates(
                 countCq, cb, countRoot, countAdmission, countStudent, countCourse, countYear, countBranch, countPaymentMode,
-                q, branchIds, courseId, batch, academicYearId,
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount, pendingMin, pendingMax
@@ -342,8 +344,9 @@ public class FeeLedgerService {
     private FeeLedgerSummaryDto querySummary(
             String q,
             List<Long> branchIds,
-            Long courseId,
+            List<Long> courseIds,
             String batch,
+            List<String> batchCodes,
             Long academicYearId,
             LocalDate startDate,
             LocalDate endDate,
@@ -372,7 +375,7 @@ public class FeeLedgerService {
 
         List<Predicate> predicates = buildPredicates(
                 cq, cb, root, admission, student, course, year, branch, paymentMode,
-                q, branchIds, courseId, batch, academicYearId,
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount, pendingMin, pendingMax
@@ -405,6 +408,11 @@ public class FeeLedgerService {
         Expression<Long> underVerificationCount = cb.<Long>selectCase()
                 .when(cb.like(statusNorm, "%verification%"), 1L)
                 .otherwise(0L);
+        Expression<Long> underVerificationStudentCount = cb.countDistinct(
+                cb.<Long>selectCase()
+                        .when(cb.like(statusNorm, "%verification%"), student.get("studentId"))
+                        .otherwise(cb.nullLiteral(Long.class))
+        );
 
         cq.multiselect(
                 cb.sum(due),
@@ -412,7 +420,8 @@ public class FeeLedgerService {
                 cb.sum(pending),
                 cb.sum(overdueAmount),
                 cb.sum(dueNext7Amount),
-                cb.sum(underVerificationCount)
+                cb.sum(underVerificationCount),
+                underVerificationStudentCount
         );
         cq.where(predicates.toArray(new Predicate[0]));
 
@@ -425,6 +434,7 @@ public class FeeLedgerService {
                 .overdueAmount(asBigDecimal(row[3]))
                 .dueNext7DaysAmount(asBigDecimal(row[4]))
                 .underVerificationCount(asLong(row[5]))
+                .underVerificationStudentCount(asLong(row[6]))
                 .build();
     }
 
@@ -440,8 +450,9 @@ public class FeeLedgerService {
             Join<FeeInstallment, PaymentModeMaster> paymentMode,
             String q,
             List<Long> branchIds,
-            Long courseId,
+            List<Long> courseIds,
             String batch,
+            List<String> batchCodes,
             Long academicYearId,
             LocalDate startDate,
             LocalDate endDate,
@@ -471,11 +482,13 @@ public class FeeLedgerService {
         if (branchIds != null && !branchIds.isEmpty()) {
             predicates.add(branch.get("id").in(branchIds));
         }
-        if (courseId != null) {
-            predicates.add(cb.equal(course.get("courseId"), courseId));
+        if (courseIds != null && !courseIds.isEmpty()) {
+            predicates.add(course.get("courseId").in(courseIds));
         }
         if (StringUtils.hasText(batch)) {
             predicates.add(cb.equal(admission.get("batch"), batch));
+        } else if (batchCodes != null && !batchCodes.isEmpty()) {
+            predicates.add(admission.get("batch").in(batchCodes));
         }
         if (academicYearId != null) {
             predicates.add(cb.equal(year.get("yearId"), academicYearId));

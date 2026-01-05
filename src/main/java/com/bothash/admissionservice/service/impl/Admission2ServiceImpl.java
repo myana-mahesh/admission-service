@@ -183,17 +183,26 @@ private final FileUploadRepository uploadRepo;
 		
 		List<FileUpload> fileTosave = new ArrayList<>();
 		for(UploadRequest uploadReq:req.getFiles()) {
-			DocumentType dt = docTypeRepo.findByCode(uploadReq.getDocTypeCode()).orElse(null); // uploads may be misc (null)
+			DocumentType dt = null;
+			String docTypeCode = uploadReq.getDocTypeCode();
+			if (StringUtils.hasText(docTypeCode)) {
+				dt = docTypeRepo.findByCode(docTypeCode).orElse(null); // uploads may be misc (null)
+			}
 
-			FileUpload f = new FileUpload();
-			if(uploadReq.getInstallmentId() == null) {
-				f = this.uploadRepo.findByAdmissionAdmissionIdAndDocTypeDocTypeId(admissionId, dt.getDocTypeId());
-			}else {
-				f = this.uploadRepo.findByAdmissionAdmissionIdAndDocTypeDocTypeIdAndInstallmentInstallmentId(admissionId, dt.getDocTypeId(),uploadReq.getInstallmentId());
+			FileUpload f = null;
+			if (dt != null) {
+				if(uploadReq.getInstallmentId() == null) {
+					f = this.uploadRepo.findByAdmissionAdmissionIdAndDocTypeDocTypeId(admissionId, dt.getDocTypeId());
+				}else {
+					f = this.uploadRepo.findByAdmissionAdmissionIdAndDocTypeDocTypeIdAndInstallmentInstallmentId(admissionId, dt.getDocTypeId(),uploadReq.getInstallmentId());
+				}
 			}
 				
 			
-			FeeInstallment feeInstallment = this.feeRepo.findByInstallmentId(uploadReq.getInstallmentId()).orElse(null);
+			FeeInstallment feeInstallment = null;
+			if (uploadReq.getInstallmentId() != null) {
+				feeInstallment = this.feeRepo.findByInstallmentId(uploadReq.getInstallmentId()).orElse(null);
+			}
 			
 			if(f == null) {
 				f = new FileUpload();

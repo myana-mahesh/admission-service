@@ -37,7 +37,9 @@ public class FeeLedgerController {
             @RequestParam(required = false) Long branchId,
             @RequestParam(required = false) String branchIds,
             @RequestParam(required = false) Long courseId,
+            @RequestParam(required = false) String courseIds,
             @RequestParam(required = false) String batch,
+            @RequestParam(required = false) String batchCodes,
             @RequestParam(required = false) Long academicYearId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
@@ -62,9 +64,17 @@ public class FeeLedgerController {
         if (branchId != null) {
             branchIdList = List.of(branchId);
         }
+        List<Long> courseIdList = splitLongCsv(courseIds);
+        if (courseId != null) {
+            courseIdList = List.of(courseId);
+        }
+        List<String> batchCodeList = splitCsv(batchCodes);
+        if (batch != null && !batch.isBlank()) {
+            batchCodeList = List.of();
+        }
 
         FeeLedgerResponseDto response = feeLedgerService.search(
-                q, branchIdList, courseId, batch, academicYearId,
+                q, branchIdList, courseIdList, batch, batchCodeList, academicYearId,
                 startDate, endDate, dateType,
                 statusList, dueStatus, paymentModes,
                 verification, proofAttached, txnPresent,
