@@ -28,6 +28,10 @@ public class PaymentModeService {
     public PaymentModeMaster getByMode(String mode) {
         return repo.findByCodeAndActiveTrueOrderByDisplayOrderAsc(mode);
     }
+
+    public Optional<PaymentModeMaster> findByCode(String code) {
+        return repo.findByCode(code);
+    }
    
     public List<PaymentModeMaster> findAll() {
         return repo.findAll();

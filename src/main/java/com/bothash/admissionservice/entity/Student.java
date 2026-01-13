@@ -34,11 +34,11 @@ public class Student extends Auditable {
     @Column(length = 150, nullable = false)
     private String fullName;
 
-    @Column(nullable = false)
+    @Column
     private LocalDate dob;
 
     @Enumerated(EnumType.STRING)
-    @Column(length = 10, nullable = false)
+    @Column(length = 10)
     private Gender gender;
 
     @Column(length = 12)

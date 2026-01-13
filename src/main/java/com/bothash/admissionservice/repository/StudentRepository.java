@@ -20,6 +20,7 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
 	  @Query("select s from Student s where lower(s.fullName) like lower(concat('%', :q, '%'))")
 	  List<Student> searchByName(String q);
 	Student findByAbsIdOrMobile(String absId, String mobile);
+	Optional<Student> findByRegistrationNumber(String registrationNumber);
 	
 	// 🔍 Pagination + simple search (optional)
     @Query("""

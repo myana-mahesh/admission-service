@@ -140,7 +140,19 @@ private final FileUploadRepository uploadRepo;
 		String branchCode = admissionBranch != null && StringUtils.hasText(admissionBranch.getCode())
 				? admissionBranch.getCode().trim()
 				: "";
-		return String.format("%02d%s%s%04d", yearTwoDigits, courseCode, branchCode, studentId);
+		String prefix = (courseCode + branchCode).replaceAll("[^A-Za-z0-9]", "").toUpperCase();
+		String idPart = String.valueOf(studentId != null ? studentId : 0L);
+		if (idPart.length() < 4) {
+			idPart = String.format("%04d", studentId);
+		}
+		String suffix = String.format("%02d", yearTwoDigits) + idPart;
+		int maxLen = 32;
+		if (suffix.length() >= maxLen) {
+			return suffix.substring(suffix.length() - maxLen);
+		}
+		int prefixLen = maxLen - suffix.length();
+		String trimmedPrefix = prefix.length() > prefixLen ? prefix.substring(0, prefixLen) : prefix;
+		return trimmedPrefix + suffix;
 	}
 
 	@Override
@@ -432,7 +444,9 @@ private final FileUploadRepository uploadRepo;
 			payment = paymentRepo.save(payment);
 			payments.add(payment);
 
-			if (verified && !invoiceRepo.existsByPayment_PaymentId(payment.getPaymentId())) {
+			if (payment.getAmount() != null
+					&& payment.getAmount().compareTo(BigDecimal.ZERO) > 0
+					&& !invoiceRepo.existsByPayment_PaymentId(payment.getPaymentId())) {
 				invoiceService.generateInvoiceForPayment(admission, installment, payment);
 			}
 

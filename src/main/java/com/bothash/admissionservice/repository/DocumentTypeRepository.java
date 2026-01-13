@@ -10,5 +10,6 @@ import com.bothash.admissionservice.entity.DocumentType;
 @Repository
 public interface DocumentTypeRepository extends JpaRepository<DocumentType, Long> {
 	  Optional<DocumentType> findByCode(String code);
+	  Optional<DocumentType> findByNameIgnoreCase(String name);
 
 }
