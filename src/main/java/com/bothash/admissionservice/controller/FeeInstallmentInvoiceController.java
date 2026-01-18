@@ -53,6 +53,8 @@ public class FeeInstallmentInvoiceController {
         private Boolean verified;
         private String verifiedBy;
         private java.time.LocalDateTime verifiedAt;
+        private Boolean accountHeadVerified;
+        private java.time.LocalDateTime accountHeadVerifiedAt;
         private java.time.LocalDate paidOn;
         private java.math.BigDecimal amount;
         private String receiptUrl;
@@ -127,6 +129,8 @@ public class FeeInstallmentInvoiceController {
             resp.setVerified(payment.getIsVerified());
             resp.setVerifiedBy(payment.getVerifiedBy());
             resp.setVerifiedAt(payment.getVerifiedAt());
+            resp.setAccountHeadVerified(payment.getIsAccountHeadVerified());
+            resp.setAccountHeadVerifiedAt(payment.getAccountHeadVerifiedAt());
             resp.setPaidOn(payment.getPaidOn());
             FileUpload upload = uploadMap.get(payment.getPaymentId());
             if (upload != null) {
@@ -162,6 +166,22 @@ public class FeeInstallmentInvoiceController {
                 resp.setDownloadUrl(inv.getDownloadUrl());
             }
         }
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/payments/{paymentId}/account-head-verify")
+    public ResponseEntity<PaymentResponse> verifyPaymentByAccountHead(
+            @PathVariable Long paymentId,
+            @RequestParam(required = false) String actor
+    ) {
+        FeeInstallmentPayment payment = feeInstallmentService.verifyPaymentByAccountHead(paymentId, actor);
+        PaymentResponse resp = new PaymentResponse();
+        resp.setPaymentId(payment.getPaymentId());
+        resp.setVerified(payment.getIsVerified());
+        resp.setVerifiedBy(payment.getVerifiedBy());
+        resp.setVerifiedAt(payment.getVerifiedAt());
+        resp.setAccountHeadVerified(payment.getIsAccountHeadVerified());
+        resp.setAccountHeadVerifiedAt(payment.getAccountHeadVerifiedAt());
         return ResponseEntity.ok(resp);
     }
 }

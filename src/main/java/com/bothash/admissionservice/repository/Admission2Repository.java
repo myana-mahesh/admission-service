@@ -23,9 +23,11 @@ public interface Admission2Repository extends JpaRepository<Admission2, Long> {
 	  @Query("select a from Admission2 a where a.examDueDate between :from and :to")
 	  List<Admission2> findExamDueBetween(LocalDate from, LocalDate to);
 
-	  Optional<Admission2> findByStudentStudentIdAndYearYearId(Long studentId, Long yearId);
+	Optional<Admission2> findByStudentStudentIdAndYearYearId(Long studentId, Long yearId);
 
 	Admission2 findByStudentStudentIdAndYearYearIdAndCourseCourseId(Long studentId, Long yearId, Long courseId);
+
+	Admission2 findFirstByStudent_MobileOrderByCreatedAtDesc(String mobile);
 
 	long countByCollegeCollegeIdAndCourseCourseIdAndStatus(Long collegeId, Long courseId, AdmissionStatus status);
 

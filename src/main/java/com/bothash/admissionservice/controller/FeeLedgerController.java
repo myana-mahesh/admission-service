@@ -53,7 +53,8 @@ public class FeeLedgerController {
             @RequestParam(required = false) String paidAmountOp,
             @RequestParam(required = false) BigDecimal paidAmount,
             @RequestParam(required = false) BigDecimal pendingMin,
-            @RequestParam(required = false) BigDecimal pendingMax
+            @RequestParam(required = false) BigDecimal pendingMax,
+            @RequestParam(required = false) Boolean branchApprovedOnly
     ) {
         Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(size, 200),
                 Sort.by(Sort.Direction.DESC, "dueDate"));
@@ -79,7 +80,7 @@ public class FeeLedgerController {
                 statusList, dueStatus, paymentModes,
                 verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount,
-                pendingMin, pendingMax, pageable
+                pendingMin, pendingMax, branchApprovedOnly, pageable
         );
 
         return ResponseEntity.ok(response);

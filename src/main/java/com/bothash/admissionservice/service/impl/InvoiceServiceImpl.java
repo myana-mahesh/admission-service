@@ -207,9 +207,9 @@ public class InvoiceServiceImpl {
 			document.add(Chunk.NEWLINE);
 
 // ========== 4. FEES TABLE (LIKE A RECEIPT LINE ITEM) ==========
-			PdfPTable feeTable = new PdfPTable(6);
+			PdfPTable feeTable = new PdfPTable(5);
 			feeTable.setWidthPercentage(100);
-			feeTable.setWidths(new float[] { 2.5f, 1.0f, 1.0f, 1.2f, 1.2f, 1.1f });
+			feeTable.setWidths(new float[] { 2.5f, 1.0f, 1.0f, 1.2f, 1.3f });
 
 // Header row
 			feeTable.addCell(headerCell("Description"));
@@ -217,7 +217,6 @@ public class InvoiceServiceImpl {
 			feeTable.addCell(headerCell("Inst. No."));
 			feeTable.addCell(headerCell("Due Date"));
 			feeTable.addCell(headerCell("Amount (₹)"));
-			feeTable.addCell(headerCell("Status"));
 
 // Data row (single installment as one line item)
 			String desc = "Tuition Fees Installment";
@@ -233,7 +232,6 @@ public class InvoiceServiceImpl {
 			java.math.BigDecimal paid = inst.getAmountPaid() != null &&  inst.getAmountPaid().doubleValue()>0.0 ? inst.getAmountPaid() : inst.getAmountDue();
 
 			feeTable.addCell(valueCell("₹ " + safe(paid), valueFont));
-			feeTable.addCell(valueCell(inst.getStatus() != null ? inst.getStatus() : "-", valueFont));
 
 			document.add(feeTable);
 			document.add(Chunk.NEWLINE);
@@ -374,19 +372,17 @@ public class InvoiceServiceImpl {
 			document.add(studentTable);
 			document.add(Chunk.NEWLINE);
 
-			PdfPTable feeTable = new PdfPTable(4);
+			PdfPTable feeTable = new PdfPTable(3);
 			feeTable.setWidthPercentage(100);
-			feeTable.setWidths(new float[] { 2.8f, 1.2f, 1.3f, 1.2f });
+			feeTable.setWidths(new float[] { 2.8f, 1.2f, 1.3f });
 
 			feeTable.addCell(headerCell("Description"));
 			feeTable.addCell(headerCell("Amount (₹)"));
 			feeTable.addCell(headerCell("Payment Mode"));
-			feeTable.addCell(headerCell("Status"));
 
 			feeTable.addCell(valueCell("Partial Payment", valueFont));
 			feeTable.addCell(valueCell("₹ " + safe(payment.getAmount()), valueFont));
 			feeTable.addCell(valueCell(payment.getPaymentMode() != null ? payment.getPaymentMode().getLabel() : "-", valueFont));
-			feeTable.addCell(valueCell(payment.getStatus() != null ? payment.getStatus() : "-", valueFont));
 
 			document.add(feeTable);
 			document.add(Chunk.NEWLINE);

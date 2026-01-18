@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -23,6 +24,8 @@ import com.bothash.admissionservice.dto.InstallmentUpsertRequest;
 import com.bothash.admissionservice.dto.MultipleUploadRequest;
 import com.bothash.admissionservice.dto.PartialPaymentRequest;
 import com.bothash.admissionservice.dto.UploadRequest;
+import com.bothash.admissionservice.dto.AdmissionDocumentReturnRequest;
+import com.bothash.admissionservice.dto.AdmissionDocumentResubmissionRequest;
 import com.bothash.admissionservice.enumpackage.AdmissionStatus;
 import com.bothash.admissionservice.enumpackage.CollegeVerificationStatus;
 import com.bothash.admissionservice.repository.*;
@@ -39,6 +42,7 @@ public class Admission2ServiceImpl implements Admission2Service {
 	private final DocumentTypeRepository docTypeRepo;
 private final AdmissionDocumentRepository admDocRepo;
 private final FileUploadRepository uploadRepo;
+	private final AdmissionDocumentReturnRepository admissionDocumentReturnRepository;
 	private final FeeInstallmentRepository feeRepo;
 	private final FeeInstallmentPaymentRepository paymentRepo;
 	private final AdmissionSignoffRepository signoffRepo;
@@ -74,9 +78,16 @@ private final FileUploadRepository uploadRepo;
 				branchRepository.findById(req.getLectureBranchId())
 						.orElseThrow(() -> new RuntimeException("Lecture branch not found"));
 
-		Admission2 a = this.admissionRepo.findByStudentStudentIdAndYearYearIdAndCourseCourseId(req.getStudentId(), year.getYearId(), course.getCourseId());
+		// Admission2 a = this.admissionRepo.findByStudentStudentIdAndYearYearIdAndCourseCourseId(req.getStudentId(), year.getYearId(), course.getCourseId());
+		Optional<Admission2> optAdmission = this.admissionRepo.findByStudentStudentIdAndYearYearId(req.getStudentId(), year.getYearId());
+		Admission2 a = null;
+		if(optAdmission !=null && optAdmission.isPresent()){
+			a = optAdmission.get();
+		}
 		boolean isNew = (a == null);
 		Long previousCollegeId = null;
+		Long previousCourseId = null;
+		AdmissionStatus previousStatus = null;
 		if (isNew) {
 			a = new Admission2();
 			a.setStatus(AdmissionStatus.PENDING);
@@ -85,8 +96,10 @@ private final FileUploadRepository uploadRepo;
 				student.setAbsId(buildAbsId(course, admissionBranch, student.getStudentId()));
 				studentRepo.save(student);
 			}
-		} else if (a.getCollege() != null) {
-			previousCollegeId = a.getCollege().getCollegeId();
+		} else {
+			previousCollegeId = a.getCollege() != null ? a.getCollege().getCollegeId() : null;
+			previousCourseId = a.getCourse() != null ? a.getCourse().getCourseId() : null;
+			previousStatus = a.getStatus();
 		}
 		a.setStudent(student);
 		a.setYear(year);
@@ -125,6 +138,12 @@ private final FileUploadRepository uploadRepo;
 		a.setAdmissionBranch(admissionBranch);
 		a.setLectureBranch(lectureBranch);
 		a = admissionRepo.save(a);
+
+		if (!isNew) {
+			Long newCollegeId = college != null ? college.getCollegeId() : null;
+			Long newCourseId = course != null ? course.getCourseId() : null;
+			adjustSeatCountsForCourseChange(previousStatus, previousCollegeId, previousCourseId, newCollegeId, newCourseId);
+		}
 
 		if (isNew && college != null) {
 			incrementOnHoldSeats(college.getCollegeId(), course.getCourseId());
@@ -186,6 +205,68 @@ private final FileUploadRepository uploadRepo;
 				});
 		doc.setReceived(received);
 		return admDocRepo.save(doc);
+	}
+
+	@Override
+	public List<AdmissionDocumentReturn> listDocumentReturns(Long admissionId) {
+		return admissionDocumentReturnRepository.findByAdmissionAdmissionIdOrderByReturnedOnDescReturnIdDesc(admissionId);
+	}
+
+	@Override
+	public AdmissionDocumentReturn addDocumentReturn(Long admissionId, AdmissionDocumentReturnRequest request) {
+		Admission2 admission = admissionRepo.findById(admissionId)
+				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
+		if (request == null || !StringUtils.hasText(request.getDocTypeCode())) {
+			throw new IllegalArgumentException("Document type is required.");
+		}
+		DocumentType docType = docTypeRepo.findByCode(request.getDocTypeCode().trim())
+				.orElseThrow(() -> new IllegalArgumentException("DocumentType not found: " + request.getDocTypeCode()));
+
+		AdmissionDocumentReturn entry = AdmissionDocumentReturn.builder()
+				.admission(admission)
+				.docType(docType)
+				.returnedOn(request.getReturnedOn() != null ? request.getReturnedOn() : LocalDate.now())
+				.reason(StringUtils.hasText(request.getReason()) ? request.getReason().trim() : null)
+				.returnedBy(StringUtils.hasText(request.getReturnedBy()) ? request.getReturnedBy().trim() : null)
+				.actionType(resolveReturnAction(request.getActionType()))
+				.build();
+		return admissionDocumentReturnRepository.save(entry);
+	}
+
+	@Override
+	public AdmissionDocumentReturn updateDocumentResubmission(Long returnId, AdmissionDocumentResubmissionRequest request) {
+		AdmissionDocumentReturn entry = admissionDocumentReturnRepository.findById(returnId)
+				.orElseThrow(() -> new IllegalArgumentException("Document return not found: " + returnId));
+		if (request == null) {
+			throw new IllegalArgumentException("Resubmission request is required.");
+		}
+		entry.setResubmittedOn(LocalDate.now());
+		String resubmittedTo = StringUtils.hasText(request.getResubmittedTo())
+				? request.getResubmittedTo().trim()
+				: null;
+		if (!StringUtils.hasText(resubmittedTo) && StringUtils.hasText(request.getResubmittedBy())) {
+			resubmittedTo = request.getResubmittedBy().trim();
+		}
+		entry.setResubmittedTo(resubmittedTo);
+		entry.setResubmissionReason(StringUtils.hasText(request.getResubmissionReason())
+				? request.getResubmissionReason().trim()
+				: null);
+		entry.setResubmittedBy(StringUtils.hasText(request.getResubmittedBy())
+				? request.getResubmittedBy().trim()
+				: null);
+		entry.setActionType("RESUBMITTED");
+		return admissionDocumentReturnRepository.save(entry);
+	}
+
+	private String resolveReturnAction(String raw) {
+		if (!StringUtils.hasText(raw)) {
+			return "RETURNED";
+		}
+		String normalized = raw.trim().toUpperCase(Locale.ENGLISH);
+		if ("RESUBMITTED".equals(normalized)) {
+			return "RESUBMITTED";
+		}
+		return "RETURNED";
 	}
 
 	@Override
@@ -635,6 +716,65 @@ private final FileUploadRepository uploadRepo;
 		int onHold = cc.getOnHoldSeats() == null ? 0 : cc.getOnHoldSeats();
 		cc.setOnHoldSeats(onHold + 1);
 		collegeCourseRepository.save(cc);
+	}
+
+	private void decrementOnHoldSeats(Long collegeId, Long courseId) {
+		CollegeCourse cc = collegeCourseRepository
+				.findByCollegeCollegeIdAndCourseCourseId(collegeId, courseId)
+				.orElseThrow(() -> new IllegalArgumentException("College course mapping not found."));
+		int onHold = cc.getOnHoldSeats() == null ? 0 : cc.getOnHoldSeats();
+		if (onHold > 0) {
+			cc.setOnHoldSeats(onHold - 1);
+			collegeCourseRepository.save(cc);
+		}
+	}
+
+	private void incrementAllocatedSeats(Long collegeId, Long courseId) {
+		CollegeCourse cc = collegeCourseRepository
+				.findByCollegeCollegeIdAndCourseCourseId(collegeId, courseId)
+				.orElseThrow(() -> new IllegalArgumentException("College course mapping not found."));
+		int allocated = cc.getAllocatedSeats() == null ? 0 : cc.getAllocatedSeats();
+		cc.setAllocatedSeats(allocated + 1);
+		cc.setLastAllocatedAt(OffsetDateTime.now());
+		collegeCourseRepository.save(cc);
+	}
+
+	private void decrementAllocatedSeats(Long collegeId, Long courseId) {
+		CollegeCourse cc = collegeCourseRepository
+				.findByCollegeCollegeIdAndCourseCourseId(collegeId, courseId)
+				.orElseThrow(() -> new IllegalArgumentException("College course mapping not found."));
+		int allocated = cc.getAllocatedSeats() == null ? 0 : cc.getAllocatedSeats();
+		if (allocated > 0) {
+			cc.setAllocatedSeats(allocated - 1);
+			collegeCourseRepository.save(cc);
+		}
+	}
+
+	private void adjustSeatCountsForCourseChange(AdmissionStatus status,
+			Long oldCollegeId,
+			Long oldCourseId,
+			Long newCollegeId,
+			Long newCourseId) {
+		boolean changed = !Objects.equals(oldCollegeId, newCollegeId)
+				|| !Objects.equals(oldCourseId, newCourseId);
+		if (!changed) {
+			return;
+		}
+		boolean admitted = status == AdmissionStatus.ADMITTED;
+		if (oldCollegeId != null && oldCourseId != null) {
+			if (admitted) {
+				decrementAllocatedSeats(oldCollegeId, oldCourseId);
+			} else {
+				decrementOnHoldSeats(oldCollegeId, oldCourseId);
+			}
+		}
+		if (newCollegeId != null && newCourseId != null) {
+			if (admitted) {
+				incrementAllocatedSeats(newCollegeId, newCourseId);
+			} else {
+				incrementOnHoldSeats(newCollegeId, newCourseId);
+			}
+		}
 	}
 
 	private void allocateSeatIfPossible(Admission2 admission) {

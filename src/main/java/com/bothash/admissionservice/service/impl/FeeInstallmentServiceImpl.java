@@ -116,6 +116,18 @@ public class FeeInstallmentServiceImpl {
         }
         return saved;
     }
+
+    @Transactional
+    public FeeInstallmentPayment verifyPaymentByAccountHead(Long paymentId, String actor) {
+        var payment = paymentRepo.findById(paymentId)
+                .orElseThrow(() -> new IllegalArgumentException("Payment not found: " + paymentId));
+        if (Boolean.TRUE.equals(payment.getIsAccountHeadVerified())) {
+            return payment;
+        }
+        payment.setIsAccountHeadVerified(true);
+        payment.setAccountHeadVerifiedAt(java.time.LocalDateTime.now());
+        return paymentRepo.save(payment);
+    }
     
     @Transactional
     public void deleteInstallment(Long installmentId, boolean deleteFilesAlso) {

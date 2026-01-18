@@ -65,5 +65,11 @@ public class FeeInstallmentPayment extends Auditable {
 
     private java.time.LocalDateTime verifiedAt;
 
+    @Column(name = "is_account_head_verified")
+    private Boolean isAccountHeadVerified;
+
+    @Column(name = "account_head_verified_at")
+    private java.time.LocalDateTime accountHeadVerifiedAt;
+
     private LocalDate paidOn;
 }

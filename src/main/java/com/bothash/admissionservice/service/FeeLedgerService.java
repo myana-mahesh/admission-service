@@ -67,20 +67,21 @@ public class FeeLedgerService {
             BigDecimal paidAmount,
             BigDecimal pendingMin,
             BigDecimal pendingMax,
+            Boolean branchApprovedOnly,
             Pageable pageable
     ) {
         FeeLedgerSummaryDto summary = querySummary(
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount, pendingMin, pendingMax
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly
         );
 
         AdmissionPage admissionPage = queryAdmissionsPage(
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount, pendingMin, pendingMax, pageable
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly, pageable
         );
 
         List<FeeInstallment> installments = admissionPage.admissionIds.isEmpty()
@@ -198,6 +199,7 @@ public class FeeLedgerService {
             BigDecimal paidAmount,
             BigDecimal pendingMin,
             BigDecimal pendingMax,
+            Boolean branchApprovedOnly,
             Pageable pageable
     ) {
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
@@ -216,7 +218,7 @@ public class FeeLedgerService {
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount, pendingMin, pendingMax
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly
         );
 
         // Apply payment-related filters using FeeInstallmentPayment table
@@ -320,7 +322,7 @@ public class FeeLedgerService {
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount, pendingMin, pendingMax
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly
         );
         countCq.select(cb.countDistinct(countAdmission.get("admissionId")));
         countCq.where(countPredicates.toArray(new Predicate[0]));
@@ -360,7 +362,8 @@ public class FeeLedgerService {
             String paidAmountOp,
             BigDecimal paidAmount,
             BigDecimal pendingMin,
-            BigDecimal pendingMax
+            BigDecimal pendingMax,
+            Boolean branchApprovedOnly
     ) {
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
         CriteriaQuery<Object[]> cq = cb.createQuery(Object[].class);
@@ -378,7 +381,7 @@ public class FeeLedgerService {
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount, pendingMin, pendingMax
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly
         );
 
         Expression<BigDecimal> due = cb.coalesce(root.get("amountDue").as(BigDecimal.class), BigDecimal.ZERO);
@@ -466,7 +469,8 @@ public class FeeLedgerService {
             String paidAmountOp,
             BigDecimal paidAmount,
             BigDecimal pendingMin,
-            BigDecimal pendingMax
+            BigDecimal pendingMax,
+            Boolean branchApprovedOnly
     ) {
         List<Predicate> predicates = new ArrayList<>();
 
@@ -493,8 +497,15 @@ public class FeeLedgerService {
         if (academicYearId != null) {
             predicates.add(cb.equal(year.get("yearId"), academicYearId));
         }
+        if (branchApprovedOnly != null) {
+            predicates.add(cb.equal(admission.get("branchApproved"), branchApprovedOnly));
+        }
 
-        applyDateFilter(cb, root, predicates, startDate, endDate, dateType);
+        if ("PAID".equalsIgnoreCase(dateType)) {
+            applyPaymentDateFilter(query, cb, admission, predicates, startDate, endDate);
+        } else {
+            applyDateFilter(cb, root, predicates, startDate, endDate, dateType);
+        }
 
         applyStatusFilter(cb, root, predicates, statusList);
         applyDueStatusFilter(cb, root, predicates, dueStatus);
@@ -514,9 +525,7 @@ public class FeeLedgerService {
             return;
         }
         String type = dateType == null ? "DUE" : dateType.toUpperCase();
-        if ("PAID".equals(type)) {
-            applyLocalDateRange(cb, predicates, root.get("paidOn"), startDate, endDate);
-        } else if ("CREATED".equals(type)) {
+        if ("CREATED".equals(type)) {
             OffsetDateTime start = startDate != null
                     ? OffsetDateTime.of(startDate, LocalTime.MIN, ZoneOffset.UTC) : null;
             OffsetDateTime end = endDate != null
@@ -531,6 +540,27 @@ public class FeeLedgerService {
         } else {
             applyLocalDateRange(cb, predicates, root.get("dueDate"), startDate, endDate);
         }
+    }
+
+    private void applyPaymentDateFilter(CriteriaQuery<?> cq, CriteriaBuilder cb,
+                                        Join<FeeInstallment, Admission2> admission,
+                                        List<Predicate> predicates,
+                                        LocalDate startDate, LocalDate endDate) {
+        if (startDate == null && endDate == null) {
+            return;
+        }
+        Subquery<Long> paymentSubquery = cq.subquery(Long.class);
+        Root<FeeInstallmentPayment> paymentRoot = paymentSubquery.from(FeeInstallmentPayment.class);
+        Join<FeeInstallmentPayment, FeeInstallment> paymentInstallment = paymentRoot.join("installment", JoinType.INNER);
+        Join<FeeInstallment, Admission2> paymentAdmission = paymentInstallment.join("admission", JoinType.INNER);
+
+        List<Predicate> paymentPredicates = new ArrayList<>();
+        applyLocalDateRange(cb, paymentPredicates, paymentRoot.get("paidOn"), startDate, endDate);
+
+        paymentSubquery.select(paymentAdmission.get("admissionId"));
+        paymentSubquery.where(paymentPredicates.toArray(new Predicate[0]));
+
+        predicates.add(admission.get("admissionId").in(paymentSubquery));
     }
 
     private void applyLocalDateRange(CriteriaBuilder cb, List<Predicate> predicates,
