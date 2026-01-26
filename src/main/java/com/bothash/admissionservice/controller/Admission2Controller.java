@@ -6,6 +6,7 @@ import com.bothash.admissionservice.enumpackage.AdmissionStatus;
 import com.bothash.admissionservice.repository.Admission2Repository;
 import com.bothash.admissionservice.service.Admission2Service;
 import com.bothash.admissionservice.repository.FileUploadRepository;
+import com.bothash.admissionservice.service.AdmissionAuditService;
 
 import com.bothash.admissionservice.service.AdmissionCancellationService;
 import jakarta.transaction.Transactional;
@@ -28,6 +29,7 @@ public class Admission2Controller {
   private final Admission2Repository admission2Repository;
   private final AdmissionCancellationService cancellationService;
   private final FileUploadRepository uploadRepository;
+  private final AdmissionAuditService admissionAuditService;
 
 
   @PostMapping
@@ -95,6 +97,27 @@ public class Admission2Controller {
     return ResponseEntity.ok(toDto(saved));
   }
 
+  @GetMapping("/{id}/additional-qualifications")
+  public ResponseEntity<List<StudentAdditionalQualificationDto>> listAdditionalQualifications(@PathVariable Long id) {
+    List<StudentAdditionalQualification> entries = admissionService.listAdditionalQualifications(id);
+    List<StudentAdditionalQualificationDto> dtos = entries.stream()
+        .map(this::toDto)
+        .toList();
+    return ResponseEntity.ok(dtos);
+  }
+
+  @PutMapping("/{id}/additional-qualifications")
+  public ResponseEntity<List<StudentAdditionalQualificationDto>> replaceAdditionalQualifications(
+      @PathVariable Long id,
+      @RequestBody List<StudentAdditionalQualificationDto> items
+  ) {
+    List<StudentAdditionalQualification> saved = admissionService.replaceAdditionalQualifications(id, items);
+    List<StudentAdditionalQualificationDto> dtos = saved.stream()
+        .map(this::toDto)
+        .toList();
+    return ResponseEntity.ok(dtos);
+  }
+
   @PostMapping("/document-returns/{returnId}/resubmission")
   public ResponseEntity<AdmissionDocumentReturnDto> updateResubmission(
       @PathVariable Long returnId,
@@ -125,6 +148,52 @@ public class Admission2Controller {
             .build())
         .toList();
     return ResponseEntity.ok(results);
+  }
+
+  @GetMapping("/{id}/audits")
+  public ResponseEntity<List<AdmissionAuditDto>> listAudits(@PathVariable Long id) {
+    List<AdmissionAudit> audits = admissionAuditService.listByAdmission(id);
+    List<AdmissionAuditDto> dtos = audits.stream()
+        .map(audit -> AdmissionAuditDto.builder()
+            .auditId(audit.getAuditId())
+            .admissionId(audit.getAdmission() != null ? audit.getAdmission().getAdmissionId() : null)
+            .action(audit.getAction())
+            .changedBy(audit.getChangedBy())
+            .changedAt(audit.getChangedAt())
+            .detailsJson(audit.getDetailsJson())
+            .changedFieldsJson(audit.getChangedFieldsJson())
+            .build())
+        .toList();
+    return ResponseEntity.ok(dtos);
+  }
+
+  @PostMapping("/{id}/audits")
+  public ResponseEntity<AdmissionAuditDto> createAudit(
+      @PathVariable Long id,
+      @RequestBody AdmissionAuditCreateRequest request
+  ) {
+    Admission2 admission = admissionService.getById(id)
+        .orElseThrow(() -> new IllegalArgumentException("Admission not found: " + id));
+    AdmissionAudit audit = admissionAuditService.record(
+        admission,
+        request != null ? request.getAction() : null,
+        request != null ? request.getChangedBy() : null,
+        request != null ? request.getDetails() : null,
+        request != null ? request.getChangedFields() : null
+    );
+    if (audit == null) {
+      return ResponseEntity.badRequest().build();
+    }
+    AdmissionAuditDto dto = AdmissionAuditDto.builder()
+        .auditId(audit.getAuditId())
+        .admissionId(audit.getAdmission() != null ? audit.getAdmission().getAdmissionId() : null)
+        .action(audit.getAction())
+        .changedBy(audit.getChangedBy())
+        .changedAt(audit.getChangedAt())
+        .detailsJson(audit.getDetailsJson())
+        .changedFieldsJson(audit.getChangedFieldsJson())
+        .build();
+    return ResponseEntity.ok(dto);
   }
 
   @PostMapping("/{id}/installments")
@@ -224,6 +293,20 @@ public class Admission2Controller {
         .resubmittedTo(entry.getResubmittedTo())
         .resubmissionReason(entry.getResubmissionReason())
         .resubmittedBy(entry.getResubmittedBy())
+        .build();
+  }
+
+  private StudentAdditionalQualificationDto toDto(StudentAdditionalQualification entry) {
+    if (entry == null) {
+      return null;
+    }
+    return StudentAdditionalQualificationDto.builder()
+        .qualificationId(entry.getQualificationId())
+        .admissionId(entry.getAdmission() != null ? entry.getAdmission().getAdmissionId() : null)
+        .qualificationType(entry.getQualificationType())
+        .courseName(entry.getCourseName())
+        .collegeName(entry.getCollegeName())
+        .percentage(entry.getPercentage())
         .build();
   }
 

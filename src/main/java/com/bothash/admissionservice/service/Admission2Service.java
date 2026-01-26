@@ -11,6 +11,7 @@ import com.bothash.admissionservice.dto.MultipleUploadRequest;
 import com.bothash.admissionservice.dto.PartialPaymentRequest;
 import com.bothash.admissionservice.dto.AdmissionDocumentReturnRequest;
 import com.bothash.admissionservice.dto.AdmissionDocumentResubmissionRequest;
+import com.bothash.admissionservice.dto.StudentAdditionalQualificationDto;
 import com.bothash.admissionservice.entity.Admission2;
 import com.bothash.admissionservice.entity.AdmissionDocument;
 import com.bothash.admissionservice.entity.AdmissionDocumentReturn;
@@ -19,6 +20,7 @@ import com.bothash.admissionservice.entity.FeeInstallment;
 import com.bothash.admissionservice.entity.FeeInstallmentPayment;
 import com.bothash.admissionservice.entity.FileUpload;
 import com.bothash.admissionservice.entity.PaymentModeMaster;
+import com.bothash.admissionservice.entity.StudentAdditionalQualification;
 import com.bothash.admissionservice.enumpackage.AdmissionStatus;
 import com.bothash.admissionservice.enumpackage.PaymentMode;
 
@@ -74,6 +76,9 @@ public interface Admission2Service {
 	List<AdmissionDocumentReturn> listDocumentReturns(Long admissionId);
 	AdmissionDocumentReturn addDocumentReturn(Long admissionId, AdmissionDocumentReturnRequest request);
 	AdmissionDocumentReturn updateDocumentResubmission(Long returnId, AdmissionDocumentResubmissionRequest request);
+	List<StudentAdditionalQualification> listAdditionalQualifications(Long admissionId);
+	List<StudentAdditionalQualification> replaceAdditionalQualifications(Long admissionId,
+			List<StudentAdditionalQualificationDto> items);
 
 	FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
 			LocalDate dueDate, String mode, String receivedBy, String status, Double yearlyFeesAmount, String txnRef,

@@ -28,6 +28,7 @@ public interface Admission2Repository extends JpaRepository<Admission2, Long> {
 	Admission2 findByStudentStudentIdAndYearYearIdAndCourseCourseId(Long studentId, Long yearId, Long courseId);
 
 	Admission2 findFirstByStudent_MobileOrderByCreatedAtDesc(String mobile);
+	Admission2 findFirstByStudentStudentIdOrderByUpdatedAtDesc(Long studentId);
 
 	long countByCollegeCollegeIdAndCourseCourseIdAndStatus(Long collegeId, Long courseId, AdmissionStatus status);
 

@@ -118,7 +118,7 @@ public class FeeLedgerService {
         Student student = admission.getStudent();
         Course course = admission.getCourse();
         AcademicYear year = admission.getYear();
-        BranchMaster branch = admission.getAdmissionBranch();
+        BranchMaster branch = admission.getLectureBranch();
 
         BigDecimal totalDue = BigDecimal.ZERO;
         BigDecimal totalPaid = BigDecimal.ZERO;
@@ -210,7 +210,7 @@ public class FeeLedgerService {
         Join<Admission2, Student> student = admission.join("student", JoinType.LEFT);
         Join<Admission2, Course> course = admission.join("course", JoinType.LEFT);
         Join<Admission2, AcademicYear> year = admission.join("year", JoinType.LEFT);
-        Join<Admission2, BranchMaster> branch = admission.join("admissionBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> branch = admission.join("lectureBranch", JoinType.LEFT);
         Join<FeeInstallment, PaymentModeMaster> paymentMode = root.join("paymentMode", JoinType.LEFT);
 
         List<Predicate> predicates = buildPredicates(
@@ -314,7 +314,7 @@ public class FeeLedgerService {
         Join<Admission2, Student> countStudent = countAdmission.join("student", JoinType.LEFT);
         Join<Admission2, Course> countCourse = countAdmission.join("course", JoinType.LEFT);
         Join<Admission2, AcademicYear> countYear = countAdmission.join("year", JoinType.LEFT);
-        Join<Admission2, BranchMaster> countBranch = countAdmission.join("admissionBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> countBranch = countAdmission.join("lectureBranch", JoinType.LEFT);
         Join<FeeInstallment, PaymentModeMaster> countPaymentMode = countRoot.join("paymentMode", JoinType.LEFT);
 
         List<Predicate> countPredicates = buildPredicates(
@@ -373,7 +373,7 @@ public class FeeLedgerService {
         Join<Admission2, Student> student = admission.join("student", JoinType.LEFT);
         Join<Admission2, Course> course = admission.join("course", JoinType.LEFT);
         Join<Admission2, AcademicYear> year = admission.join("year", JoinType.LEFT);
-        Join<Admission2, BranchMaster> branch = admission.join("admissionBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> branch = admission.join("lectureBranch", JoinType.LEFT);
         Join<FeeInstallment, PaymentModeMaster> paymentMode = root.join("paymentMode", JoinType.LEFT);
 
         List<Predicate> predicates = buildPredicates(

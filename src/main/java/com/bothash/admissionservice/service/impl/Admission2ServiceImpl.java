@@ -8,17 +8,23 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import com.bothash.admissionservice.service.Admission2Service;
+import com.bothash.admissionservice.service.AdmissionAuditService;
 import com.bothash.admissionservice.dto.CreateAdmissionRequest;
 import com.bothash.admissionservice.dto.InstallmentUpsertRequest;
 import com.bothash.admissionservice.dto.MultipleUploadRequest;
@@ -26,6 +32,7 @@ import com.bothash.admissionservice.dto.PartialPaymentRequest;
 import com.bothash.admissionservice.dto.UploadRequest;
 import com.bothash.admissionservice.dto.AdmissionDocumentReturnRequest;
 import com.bothash.admissionservice.dto.AdmissionDocumentResubmissionRequest;
+import com.bothash.admissionservice.dto.StudentAdditionalQualificationDto;
 import com.bothash.admissionservice.enumpackage.AdmissionStatus;
 import com.bothash.admissionservice.enumpackage.CollegeVerificationStatus;
 import com.bothash.admissionservice.repository.*;
@@ -43,6 +50,7 @@ public class Admission2ServiceImpl implements Admission2Service {
 private final AdmissionDocumentRepository admDocRepo;
 private final FileUploadRepository uploadRepo;
 	private final AdmissionDocumentReturnRepository admissionDocumentReturnRepository;
+	private final StudentAdditionalQualificationRepository studentAdditionalQualificationRepository;
 	private final FeeInstallmentRepository feeRepo;
 	private final FeeInstallmentPaymentRepository paymentRepo;
 	private final AdmissionSignoffRepository signoffRepo;
@@ -51,6 +59,7 @@ private final FileUploadRepository uploadRepo;
 	private final CollegeCourseRepository collegeCourseRepository;
 	private final InvoiceServiceImpl invoiceService;
 	private final FeeInvoiceRepository invoiceRepo;
+	private final AdmissionAuditService admissionAuditService;
 	
 	@Autowired
 	private YearlyFeesRepository yearlyFeesRepository;
@@ -88,6 +97,19 @@ private final FileUploadRepository uploadRepo;
 		Long previousCollegeId = null;
 		Long previousCourseId = null;
 		AdmissionStatus previousStatus = null;
+		String prevFormNo = null;
+		LocalDate prevFormDate = null;
+		Double prevTotalFees = null;
+		Double prevDiscount = null;
+		String prevDiscountRemark = null;
+		String prevDiscountRemarkOther = null;
+		Integer prevInstallments = null;
+		String prevBatch = null;
+		String prevRegistrationNumber = null;
+		String prevReferenceName = null;
+		Long prevAdmissionBranchId = null;
+		Long prevLectureBranchId = null;
+		CollegeVerificationStatus prevCollegeVerificationStatus = null;
 		if (isNew) {
 			a = new Admission2();
 			a.setStatus(AdmissionStatus.PENDING);
@@ -100,6 +122,19 @@ private final FileUploadRepository uploadRepo;
 			previousCollegeId = a.getCollege() != null ? a.getCollege().getCollegeId() : null;
 			previousCourseId = a.getCourse() != null ? a.getCourse().getCourseId() : null;
 			previousStatus = a.getStatus();
+			prevFormNo = a.getFormNo();
+			prevFormDate = a.getFormDate();
+			prevTotalFees = a.getTotalFees();
+			prevDiscount = a.getDiscount();
+			prevDiscountRemark = a.getDiscountRemark();
+			prevDiscountRemarkOther = a.getDiscountRemarkOther();
+			prevInstallments = a.getNoOfInstallments();
+			prevBatch = a.getBatch();
+			prevRegistrationNumber = a.getRegistrationNumber();
+			prevReferenceName = a.getReferenceName();
+			prevAdmissionBranchId = a.getAdmissionBranch() != null ? a.getAdmissionBranch().getId() : null;
+			prevLectureBranchId = a.getLectureBranch() != null ? a.getLectureBranch().getId() : null;
+			prevCollegeVerificationStatus = a.getCollegeVerificationStatus();
 		}
 		a.setStudent(student);
 		a.setYear(year);
@@ -143,6 +178,28 @@ private final FileUploadRepository uploadRepo;
 			Long newCollegeId = college != null ? college.getCollegeId() : null;
 			Long newCourseId = course != null ? course.getCourseId() : null;
 			adjustSeatCountsForCourseChange(previousStatus, previousCollegeId, previousCourseId, newCollegeId, newCourseId);
+
+			Map<String, Object> changes = new LinkedHashMap<>();
+			addChange(changes, "courseId", previousCourseId, newCourseId);
+			addChange(changes, "collegeId", previousCollegeId, newCollegeId);
+			addChange(changes, "totalFees", prevTotalFees, a.getTotalFees());
+			addChange(changes, "discount", prevDiscount, a.getDiscount());
+			addChange(changes, "discountRemark", prevDiscountRemark, a.getDiscountRemark());
+			addChange(changes, "discountRemarkOther", prevDiscountRemarkOther, a.getDiscountRemarkOther());
+			addChange(changes, "noOfInstallments", prevInstallments, a.getNoOfInstallments());
+			addChange(changes, "batch", prevBatch, a.getBatch());
+			addChange(changes, "registrationNumber", prevRegistrationNumber, a.getRegistrationNumber());
+			addChange(changes, "referenceName", prevReferenceName, a.getReferenceName());
+			addChange(changes, "admissionBranchId", prevAdmissionBranchId,
+					a.getAdmissionBranch() != null ? a.getAdmissionBranch().getId() : null);
+			addChange(changes, "lectureBranchId", prevLectureBranchId,
+					a.getLectureBranch() != null ? a.getLectureBranch().getId() : null);
+			addChange(changes, "collegeVerificationStatus", prevCollegeVerificationStatus, a.getCollegeVerificationStatus());
+			Map<String, Object> details = Map.of(
+					"admissionId", a.getAdmissionId(),
+					"studentId", student.getStudentId()
+			);
+			audit(a, "ADMISSION_UPDATED", null, details, changes);
 		}
 
 		if (isNew && college != null) {
@@ -179,14 +236,28 @@ private final FileUploadRepository uploadRepo;
 			String collegeLocation, String remarks, LocalDate examDueDate, LocalDate dateOfAdmission) {
 		Admission2 a = admissionRepo.findById(admissionId)
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
+		String prevLastCollege = a.getLastCollege();
+		String prevCollegeAttended = a.getCollegeAttended();
+		String prevCollegeLocation = a.getCollegeLocation();
+		String prevRemarks = a.getRemarks();
+		LocalDate prevExamDueDate = a.getExamDueDate();
+		LocalDate prevDateOfAdm = a.getDateOfAdm();
 		a.setLastCollege(lastCollege);
 		a.setCollegeAttended(collegeAttended);
 		a.setCollegeLocation(collegeLocation);
 		a.setRemarks(remarks);
 		a.setExamDueDate(examDueDate);
 		a.setDateOfAdm(dateOfAdmission);
-
-		return admissionRepo.save(a);
+		a = admissionRepo.save(a);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "lastCollege", prevLastCollege, a.getLastCollege());
+		addChange(changes, "collegeAttended", prevCollegeAttended, a.getCollegeAttended());
+		addChange(changes, "collegeLocation", prevCollegeLocation, a.getCollegeLocation());
+		addChange(changes, "remarks", prevRemarks, a.getRemarks());
+		addChange(changes, "examDueDate", prevExamDueDate, a.getExamDueDate());
+		addChange(changes, "dateOfAdmission", prevDateOfAdm, a.getDateOfAdm());
+		audit(a, "OFFICE_DETAILS_UPDATED", null, Map.of("admissionId", admissionId), changes);
+		return a;
 	}
 
 	@Override
@@ -203,8 +274,17 @@ private final FileUploadRepository uploadRepo;
 					d.setDocType(dt);
 					return d;
 				});
+		Boolean prevReceived = doc.isReceived();
 		doc.setReceived(received);
-		return admDocRepo.save(doc);
+		doc = admDocRepo.save(doc);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "documents." + dt.getCode() + ".received", prevReceived, doc.isReceived());
+		Map<String, Object> details = Map.of(
+				"docTypeCode", dt.getCode(),
+				"docTypeId", dt.getDocTypeId()
+		);
+		audit(a, "DOCUMENT_CHECKLIST_UPDATED", null, details, changes);
+		return doc;
 	}
 
 	@Override
@@ -230,13 +310,30 @@ private final FileUploadRepository uploadRepo;
 				.returnedBy(StringUtils.hasText(request.getReturnedBy()) ? request.getReturnedBy().trim() : null)
 				.actionType(resolveReturnAction(request.getActionType()))
 				.build();
-		return admissionDocumentReturnRepository.save(entry);
+		entry = admissionDocumentReturnRepository.save(entry);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "documentReturn.docTypeCode", null, docType.getCode());
+		addChange(changes, "documentReturn.returnedOn", null, entry.getReturnedOn());
+		addChange(changes, "documentReturn.reason", null, entry.getReason());
+		addChange(changes, "documentReturn.returnedBy", null, entry.getReturnedBy());
+		addChange(changes, "documentReturn.actionType", null, entry.getActionType());
+		Map<String, Object> details = Map.of(
+				"returnId", entry.getReturnId(),
+				"docTypeCode", docType.getCode()
+		);
+		audit(admission, "DOCUMENT_RETURNED", entry.getReturnedBy(), details, changes);
+		return entry;
 	}
 
 	@Override
 	public AdmissionDocumentReturn updateDocumentResubmission(Long returnId, AdmissionDocumentResubmissionRequest request) {
 		AdmissionDocumentReturn entry = admissionDocumentReturnRepository.findById(returnId)
 				.orElseThrow(() -> new IllegalArgumentException("Document return not found: " + returnId));
+		LocalDate prevResubmittedOn = entry.getResubmittedOn();
+		String prevResubmittedTo = entry.getResubmittedTo();
+		String prevResubmissionReason = entry.getResubmissionReason();
+		String prevResubmittedBy = entry.getResubmittedBy();
+		String prevActionType = entry.getActionType();
 		if (request == null) {
 			throw new IllegalArgumentException("Resubmission request is required.");
 		}
@@ -255,7 +352,182 @@ private final FileUploadRepository uploadRepo;
 				? request.getResubmittedBy().trim()
 				: null);
 		entry.setActionType("RESUBMITTED");
-		return admissionDocumentReturnRepository.save(entry);
+		entry = admissionDocumentReturnRepository.save(entry);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "documentReturn.resubmittedOn", prevResubmittedOn, entry.getResubmittedOn());
+		addChange(changes, "documentReturn.resubmittedTo", prevResubmittedTo, entry.getResubmittedTo());
+		addChange(changes, "documentReturn.resubmissionReason", prevResubmissionReason, entry.getResubmissionReason());
+		addChange(changes, "documentReturn.resubmittedBy", prevResubmittedBy, entry.getResubmittedBy());
+		addChange(changes, "documentReturn.actionType", prevActionType, entry.getActionType());
+		Admission2 admission = entry.getAdmission();
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("returnId", entry.getReturnId());
+		details.put("docTypeCode", entry.getDocType() != null ? entry.getDocType().getCode() : null);
+		audit(admission, "DOCUMENT_RESUBMITTED", entry.getResubmittedBy(), details, changes);
+		return entry;
+	}
+
+	@Override
+	public List<StudentAdditionalQualification> listAdditionalQualifications(Long admissionId) {
+		return studentAdditionalQualificationRepository.findByAdmissionAdmissionIdOrderByQualificationIdAsc(admissionId);
+	}
+
+	@Override
+	public List<StudentAdditionalQualification> replaceAdditionalQualifications(
+			Long admissionId,
+			List<StudentAdditionalQualificationDto> items
+	) {
+		Admission2 admission = admissionRepo.findById(admissionId)
+				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
+		List<StudentAdditionalQualification> beforeEntries =
+				studentAdditionalQualificationRepository.findByAdmissionAdmissionIdOrderByQualificationIdAsc(admissionId);
+		List<QualificationSnapshot> beforeSnapshots = snapshotsFromEntities(beforeEntries);
+		List<QualificationSnapshot> incomingSnapshots = snapshotsFromDtos(items);
+		if (Objects.equals(beforeSnapshots, incomingSnapshots)) {
+			return beforeEntries;
+		}
+		studentAdditionalQualificationRepository.deleteByAdmissionAdmissionId(admissionId);
+		if (incomingSnapshots.isEmpty()) {
+			Map<String, Object> changes = new LinkedHashMap<>();
+			changes.put("additionalQualifications", Map.of(
+					"label", "Additional Qualifications",
+					"before", snapshotMaps(beforeSnapshots),
+					"after", List.of()
+			));
+			audit(admission, "ADDITIONAL_QUALIFICATIONS_UPDATED", null, Map.of("admissionId", admissionId), changes);
+			return List.of();
+		}
+		List<StudentAdditionalQualification> entries = new ArrayList<>();
+		for (StudentAdditionalQualificationDto item : items) {
+			if (item == null) {
+				continue;
+			}
+			boolean hasData = StringUtils.hasText(item.getQualificationType())
+					|| StringUtils.hasText(item.getCourseName())
+					|| StringUtils.hasText(item.getCollegeName())
+					|| item.getPercentage() != null;
+			if (!hasData) {
+				continue;
+			}
+			StudentAdditionalQualification entry = StudentAdditionalQualification.builder()
+					.admission(admission)
+					.qualificationType(StringUtils.hasText(item.getQualificationType())
+							? item.getQualificationType().trim()
+							: null)
+					.courseName(StringUtils.hasText(item.getCourseName()) ? item.getCourseName().trim() : null)
+					.collegeName(StringUtils.hasText(item.getCollegeName()) ? item.getCollegeName().trim() : null)
+					.percentage(item.getPercentage())
+					.build();
+			entries.add(entry);
+		}
+		if (entries.isEmpty()) {
+			Map<String, Object> changes = new LinkedHashMap<>();
+			changes.put("additionalQualifications", Map.of(
+					"label", "Additional Qualifications",
+					"before", snapshotMaps(beforeSnapshots),
+					"after", List.of()
+			));
+			audit(admission, "ADDITIONAL_QUALIFICATIONS_UPDATED", null, Map.of("admissionId", admissionId), changes);
+			return List.of();
+		}
+		List<StudentAdditionalQualification> saved = studentAdditionalQualificationRepository.saveAll(entries);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		changes.put("additionalQualifications", Map.of(
+				"label", "Additional Qualifications",
+				"before", snapshotMaps(beforeSnapshots),
+				"after", snapshotMaps(snapshotsFromEntities(saved))
+		));
+		audit(admission, "ADDITIONAL_QUALIFICATIONS_UPDATED", null, Map.of("admissionId", admissionId), changes);
+		return saved;
+	}
+
+	private List<QualificationSnapshot> snapshotsFromEntities(List<StudentAdditionalQualification> entries) {
+		if (entries == null) {
+			return List.of();
+		}
+		List<QualificationSnapshot> snapshots = new ArrayList<>();
+		for (StudentAdditionalQualification entry : entries) {
+			if (entry == null) {
+				continue;
+			}
+			snapshots.add(new QualificationSnapshot(
+					clean(entry.getQualificationType()),
+					clean(entry.getCourseName()),
+					clean(entry.getCollegeName()),
+					normalizePercentage(entry.getPercentage())
+			));
+		}
+		snapshots.sort(qualificationComparator());
+		return snapshots;
+	}
+
+	private List<QualificationSnapshot> snapshotsFromDtos(List<StudentAdditionalQualificationDto> items) {
+		if (items == null) {
+			return List.of();
+		}
+		List<QualificationSnapshot> snapshots = new ArrayList<>();
+		for (StudentAdditionalQualificationDto item : items) {
+			if (item == null) {
+				continue;
+			}
+			boolean hasData = StringUtils.hasText(item.getQualificationType())
+					|| StringUtils.hasText(item.getCourseName())
+					|| StringUtils.hasText(item.getCollegeName())
+					|| item.getPercentage() != null;
+			if (!hasData) {
+				continue;
+			}
+			snapshots.add(new QualificationSnapshot(
+					clean(item.getQualificationType()),
+					clean(item.getCourseName()),
+					clean(item.getCollegeName()),
+					normalizePercentage(item.getPercentage())
+			));
+		}
+		snapshots.sort(qualificationComparator());
+		return snapshots;
+	}
+
+	private List<Map<String, Object>> snapshotMaps(List<QualificationSnapshot> snapshots) {
+		if (snapshots == null) {
+			return List.of();
+		}
+		List<Map<String, Object>> mapped = new ArrayList<>();
+		for (QualificationSnapshot snapshot : snapshots) {
+			Map<String, Object> row = new LinkedHashMap<>();
+			row.put("type", snapshot.type());
+			row.put("courseName", snapshot.courseName());
+			row.put("collegeName", snapshot.collegeName());
+			row.put("percentage", snapshot.percentage());
+			mapped.add(row);
+		}
+		return mapped;
+	}
+
+	private java.util.Comparator<QualificationSnapshot> qualificationComparator() {
+		return java.util.Comparator
+				.comparing(QualificationSnapshot::type, java.util.Comparator.nullsFirst(String::compareToIgnoreCase))
+				.thenComparing(QualificationSnapshot::courseName, java.util.Comparator.nullsFirst(String::compareToIgnoreCase))
+				.thenComparing(QualificationSnapshot::collegeName, java.util.Comparator.nullsFirst(String::compareToIgnoreCase))
+				.thenComparing(QualificationSnapshot::percentage, java.util.Comparator.nullsFirst(Double::compareTo));
+	}
+
+	private String clean(String value) {
+		if (!StringUtils.hasText(value)) {
+			return null;
+		}
+		return value.trim();
+	}
+
+	private Double normalizePercentage(Double value) {
+		if (value == null) {
+			return null;
+		}
+		BigDecimal normalized = BigDecimal.valueOf(value).setScale(2, java.math.RoundingMode.HALF_UP);
+		return normalized.doubleValue();
+	}
+
+	private record QualificationSnapshot(String type, String courseName, String collegeName, Double percentage) {
 	}
 
 	private String resolveReturnAction(String raw) {
@@ -275,6 +547,7 @@ private final FileUploadRepository uploadRepo;
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
 		
 		List<FileUpload> fileTosave = new ArrayList<>();
+		List<Map<String, Object>> uploadChanges = new ArrayList<>();
 		for(UploadRequest uploadReq:req.getFiles()) {
 			DocumentType dt = null;
 			String docTypeCode = uploadReq.getDocTypeCode();
@@ -300,6 +573,13 @@ private final FileUploadRepository uploadRepo;
 			if(f == null) {
 				f = new FileUpload();
 			}
+			Long prevFileId = f.getFileId();
+			String prevFilename = f.getFilename();
+			String prevLabel = f.getLabel();
+			String prevMimeType = f.getMimeType();
+			Integer prevSize = f.getSizeBytes();
+			String prevStorageUrl = f.getStorageUrl();
+			String prevSha = f.getSha256();
 			
 			f.setAdmission(a);
 			f.setDocType(dt);
@@ -311,10 +591,22 @@ private final FileUploadRepository uploadRepo;
 			f.setLabel(uploadReq.getLabel());
 			f.setInstallment(feeInstallment);
 			fileTosave.add(f);
+
+			Map<String, Object> fieldChanges = new LinkedHashMap<>();
+			addChange(fieldChanges, "filename", prevFilename, f.getFilename());
+
+			Map<String, Object> change = new LinkedHashMap<>();
+			change.put("fileId", prevFileId);
+			change.put("docTypeCode", dt != null ? dt.getCode() : null);
+			change.put("installmentId", feeInstallment != null ? feeInstallment.getInstallmentId() : null);
+			change.put("changes", fieldChanges);
+			if (!fieldChanges.isEmpty()) {
+				uploadChanges.add(change);
+			}
 		}
 		if(!fileTosave.isEmpty())
 			fileTosave = this.uploadRepo.saveAll(fileTosave);
-		
+		audit(a, "DOCUMENT_UPLOADS_UPDATED", null, Map.of("admissionId", admissionId), uploadChanges);
 		return fileTosave;
 		
 	}
@@ -326,8 +618,9 @@ private final FileUploadRepository uploadRepo;
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
 		
 	
-		FeeInstallment fee = feeRepo
-				.findByAdmissionAdmissionIdAndStudyYearAndInstallmentNo(admissionId, studyYear, installmentNo)
+		Optional<FeeInstallment> existingOpt = feeRepo
+				.findByAdmissionAdmissionIdAndStudyYearAndInstallmentNo(admissionId, studyYear, installmentNo);
+		FeeInstallment fee = existingOpt
 				.orElseGet(() -> {
 					FeeInstallment f = new FeeInstallment();
 					f.setAdmission(a);
@@ -343,6 +636,12 @@ private final FileUploadRepository uploadRepo;
 					
 					return f;
 				});
+		String prevMode = fee.getPaymentMode() != null ? fee.getPaymentMode().getCode() : null;
+		String prevStatus = fee.getStatus();
+		String prevReceivedBy = fee.getReceivedBy();
+		BigDecimal prevAmountDue = fee.getAmountDue();
+		LocalDate prevDueDate = fee.getDueDate();
+		Long prevInstallmentId = fee.getInstallmentId();
 		fee.setAdmission(a);
 		fee.setStudyYear(studyYear);
 		fee.setInstallmentNo(installmentNo);
@@ -354,7 +653,18 @@ private final FileUploadRepository uploadRepo;
 		fee.setReceivedBy(receivedBy);
 		fee.setAmountDue(amountDue);
 		fee.setDueDate(dueDate);
-		return feeRepo.save(fee);
+		fee = feeRepo.save(fee);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "installmentId", prevInstallmentId, fee.getInstallmentId());
+		addChange(changes, "studyYear", fee.getStudyYear(), fee.getStudyYear());
+		addChange(changes, "installmentNo", fee.getInstallmentNo(), fee.getInstallmentNo());
+		addChange(changes, "amountDue", prevAmountDue, fee.getAmountDue());
+		addChange(changes, "dueDate", prevDueDate, fee.getDueDate());
+		addChange(changes, "status", prevStatus, fee.getStatus());
+		addChange(changes, "paymentMode", prevMode, fee.getPaymentMode() != null ? fee.getPaymentMode().getCode() : null);
+		addChange(changes, "receivedBy", prevReceivedBy, fee.getReceivedBy());
+		audit(a, "INSTALLMENT_UPDATED", receivedBy, Map.of("installmentId", fee.getInstallmentId()), changes);
+		return fee;
 	}
 	@Override
 	public FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
@@ -371,12 +681,14 @@ private final FileUploadRepository uploadRepo;
 			yearlyFees.setAdmission(a);
 		}
 		
+		Double prevYearlyFees = yearlyFees.getFees();
 		yearlyFees.setFees(yearlyFeesAmount);
 		this.yearlyFeesRepository.save(yearlyFees);
 		
 
-		FeeInstallment fee = feeRepo
-				.findByAdmissionAdmissionIdAndStudyYearAndInstallmentNo(admissionId, studyYear, installmentNo)
+		Optional<FeeInstallment> existingOpt = feeRepo
+				.findByAdmissionAdmissionIdAndStudyYearAndInstallmentNo(admissionId, studyYear, installmentNo);
+		FeeInstallment fee = existingOpt
 				.orElseGet(() -> {
 					FeeInstallment f = new FeeInstallment();
 					f.setAdmission(a);
@@ -400,6 +712,14 @@ private final FileUploadRepository uploadRepo;
 					
 					return f;
 				});
+		String prevMode = fee.getPaymentMode() != null ? fee.getPaymentMode().getCode() : null;
+		String prevStatus = fee.getStatus();
+		String prevReceivedBy = fee.getReceivedBy();
+		String prevTxnRef = fee.getTxnRef();
+		BigDecimal prevAmountDue = fee.getAmountDue();
+		BigDecimal prevAmountPaid = fee.getAmountPaid();
+		LocalDate prevDueDate = fee.getDueDate();
+		Long prevInstallmentId = fee.getInstallmentId();
 		fee.setAdmission(a);
 		fee.setStudyYear(studyYear);
 		fee.setInstallmentNo(installmentNo);
@@ -420,7 +740,19 @@ private final FileUploadRepository uploadRepo;
 		fee.setReceivedBy(receivedBy);
 		fee.setAmountDue(amountDue);
 		fee.setDueDate(dueDate);
-		return feeRepo.save(fee);
+		fee = feeRepo.save(fee);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "installmentId", prevInstallmentId, fee.getInstallmentId());
+		addChange(changes, "amountDue", prevAmountDue, fee.getAmountDue());
+		addChange(changes, "amountPaid", prevAmountPaid, fee.getAmountPaid());
+		addChange(changes, "dueDate", prevDueDate, fee.getDueDate());
+		addChange(changes, "status", prevStatus, fee.getStatus());
+		addChange(changes, "paymentMode", prevMode, fee.getPaymentMode() != null ? fee.getPaymentMode().getCode() : null);
+		addChange(changes, "receivedBy", prevReceivedBy, fee.getReceivedBy());
+		addChange(changes, "txnRef", prevTxnRef, fee.getTxnRef());
+		addChange(changes, "yearlyFees", prevYearlyFees, yearlyFees.getFees());
+		audit(a, "INSTALLMENT_UPDATED", receivedBy, Map.of("installmentId", fee.getInstallmentId()), changes);
+		return fee;
 	}
 
 	private String resolveInstallmentStatus(String currentStatus, String requestedStatus, String role) {
@@ -466,8 +798,9 @@ private final FileUploadRepository uploadRepo;
 
 	@Override
 	public List<FeeInstallmentPayment> applyPartialPayment(Long admissionId, PartialPaymentRequest request, String role) {
-		if (request == null || request.getAmount() == null || request.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
-			throw new IllegalArgumentException("Payment amount must be greater than zero.");
+		if (request == null || request.getAmount() == null
+				|| request.getAmount().compareTo(BigDecimal.ZERO) == 0) {
+			throw new IllegalArgumentException("Payment amount must be non-zero.");
 		}
 		Admission2 admission = admissionRepo.findById(admissionId)
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
@@ -475,6 +808,15 @@ private final FileUploadRepository uploadRepo;
 		List<FeeInstallment> installments = feeRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admissionId);
 		if (installments.isEmpty()) {
 			throw new IllegalArgumentException("No installments found for admission: " + admissionId);
+		}
+		Map<Long, Map<String, Object>> beforeInstallments = new LinkedHashMap<>();
+		for (FeeInstallment installment : installments) {
+			Map<String, Object> snapshot = new LinkedHashMap<>();
+			snapshot.put("amountPaid", installment.getAmountPaid());
+			snapshot.put("status", installment.getStatus());
+			snapshot.put("isVerified", installment.getIsVerified());
+			snapshot.put("paidOn", installment.getPaidOn());
+			beforeInstallments.put(installment.getInstallmentId(), snapshot);
 		}
 
 		PaymentModeMaster paymentMode = null;
@@ -484,35 +826,136 @@ private final FileUploadRepository uploadRepo;
 
 		BigDecimal remaining = request.getAmount();
 		List<FeeInstallmentPayment> payments = new ArrayList<>();
+		if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+			for (FeeInstallment installment : installments) {
+				if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
+					break;
+				}
+				BigDecimal amountDue = installment.getAmountDue() == null ? BigDecimal.ZERO : installment.getAmountDue();
+				BigDecimal amountPaid = installment.getAmountPaid() == null ? BigDecimal.ZERO : installment.getAmountPaid();
+				BigDecimal pending = amountDue.subtract(amountPaid);
+				if (pending.compareTo(BigDecimal.ZERO) <= 0) {
+					continue;
+				}
+
+				BigDecimal applied = remaining.min(pending);
+				BigDecimal newPaid = amountPaid.add(applied);
+				installment.setAmountPaid(newPaid);
+
+				boolean fullyPaid = newPaid.compareTo(amountDue) >= 0;
+				String status = resolvePartialPaymentStatus(role, fullyPaid);
+				installment.setStatus(status);
+				boolean verified = isRoleOneOf(role, "HO");
+				installment.setIsVerified(verified);
+				if (fullyPaid && installment.getPaidOn() == null) {
+					installment.setPaidOn(LocalDate.now());
+				}
+				feeRepo.save(installment);
+
+				String paymentStatus = verified ? "Paid" : "Under Verification";
+				FeeInstallmentPayment payment = FeeInstallmentPayment.builder()
+						.installment(installment)
+						.amount(applied)
+						.paymentMode(paymentMode)
+						.txnRef(request.getTxnRef())
+						.receivedBy(request.getReceivedBy())
+						.status(paymentStatus)
+						.isVerified(verified)
+						.verifiedBy(verified ? request.getReceivedBy() : null)
+						.verifiedAt(verified ? LocalDateTime.now() : null)
+						.paidOn(LocalDate.now())
+						.build();
+				payment = paymentRepo.save(payment);
+				payments.add(payment);
+
+				if (payment.getAmount() != null
+						&& payment.getAmount().compareTo(BigDecimal.ZERO) > 0
+						&& !invoiceRepo.existsByPayment_PaymentId(payment.getPaymentId())) {
+					invoiceService.generateInvoiceForPayment(admission, installment, payment);
+				}
+
+				UploadRequest receipt = request.getReceipt();
+				if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
+					FileUpload upload = buildPaymentReceiptUpload(admission, installment, payment, receipt);
+					uploadRepo.save(upload);
+				}
+
+				remaining = remaining.subtract(applied);
+			}
+
+			if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+				throw new IllegalArgumentException("Payment exceeds pending installment totals.");
+			}
+			List<Map<String, Object>> installmentChanges = new ArrayList<>();
+			for (FeeInstallment installment : installments) {
+				Map<String, Object> before = beforeInstallments.get(installment.getInstallmentId());
+				if (before == null) {
+					continue;
+				}
+				Map<String, Object> fieldChanges = new LinkedHashMap<>();
+				addChange(fieldChanges, "amountPaid", before.get("amountPaid"), installment.getAmountPaid());
+				addChange(fieldChanges, "status", before.get("status"), installment.getStatus());
+				addChange(fieldChanges, "isVerified", before.get("isVerified"), installment.getIsVerified());
+				addChange(fieldChanges, "paidOn", before.get("paidOn"), installment.getPaidOn());
+				if (!fieldChanges.isEmpty()) {
+					Map<String, Object> change = new LinkedHashMap<>();
+					change.put("installmentId", installment.getInstallmentId());
+					change.put("changes", fieldChanges);
+					installmentChanges.add(change);
+				}
+			}
+			List<Map<String, Object>> paymentDetails = new ArrayList<>();
+			for (FeeInstallmentPayment payment : payments) {
+				Map<String, Object> paymentMap = new LinkedHashMap<>();
+				paymentMap.put("paymentId", payment.getPaymentId());
+				paymentMap.put("installmentId", payment.getInstallment() != null
+						? payment.getInstallment().getInstallmentId()
+						: null);
+				paymentMap.put("amount", payment.getAmount());
+				paymentMap.put("status", payment.getStatus());
+				paymentMap.put("paidOn", payment.getPaidOn());
+				paymentDetails.add(paymentMap);
+			}
+			Map<String, Object> details = new LinkedHashMap<>();
+			details.put("amount", request.getAmount());
+			details.put("mode", request.getMode());
+			details.put("txnRef", request.getTxnRef());
+			details.put("payments", paymentDetails);
+			audit(admission, "PAYMENT_APPLIED", request.getReceivedBy(), details, installmentChanges);
+			return payments;
+		}
+
+		BigDecimal reversalRemaining = remaining.abs();
 		for (FeeInstallment installment : installments) {
-			if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
+			if (reversalRemaining.compareTo(BigDecimal.ZERO) <= 0) {
 				break;
 			}
-			BigDecimal amountDue = installment.getAmountDue() == null ? BigDecimal.ZERO : installment.getAmountDue();
 			BigDecimal amountPaid = installment.getAmountPaid() == null ? BigDecimal.ZERO : installment.getAmountPaid();
-			BigDecimal pending = amountDue.subtract(amountPaid);
-			if (pending.compareTo(BigDecimal.ZERO) <= 0) {
+			if (amountPaid.compareTo(BigDecimal.ZERO) <= 0) {
 				continue;
 			}
-
-			BigDecimal applied = remaining.min(pending);
-			BigDecimal newPaid = amountPaid.add(applied);
+			BigDecimal applied = reversalRemaining.min(amountPaid);
+			BigDecimal newPaid = amountPaid.subtract(applied);
 			installment.setAmountPaid(newPaid);
-
-			boolean fullyPaid = newPaid.compareTo(amountDue) >= 0;
-			String status = resolvePartialPaymentStatus(role, fullyPaid);
-			installment.setStatus(status);
-			boolean verified = isRoleOneOf(role, "HO");
-			installment.setIsVerified(verified);
-			if (fullyPaid && installment.getPaidOn() == null) {
-				installment.setPaidOn(LocalDate.now());
+			BigDecimal amountDue = installment.getAmountDue() == null ? BigDecimal.ZERO : installment.getAmountDue();
+			String computedStatus;
+			if (newPaid.compareTo(BigDecimal.ZERO) == 0) {
+				computedStatus = "Un Paid";
+				installment.setPaidOn(null);
+			} else if (newPaid.compareTo(amountDue) >= 0) {
+				computedStatus = "Paid";
+			} else {
+				computedStatus = "Partial Received";
 			}
+			boolean verified = isRoleOneOf(role, "HO");
+			installment.setStatus(verified ? computedStatus : "Under Verification");
+			installment.setIsVerified(verified);
 			feeRepo.save(installment);
 
 			String paymentStatus = verified ? "Paid" : "Under Verification";
 			FeeInstallmentPayment payment = FeeInstallmentPayment.builder()
 					.installment(installment)
-					.amount(applied)
+					.amount(applied.negate())
 					.paymentMode(paymentMode)
 					.txnRef(request.getTxnRef())
 					.receivedBy(request.getReceivedBy())
@@ -525,24 +968,54 @@ private final FileUploadRepository uploadRepo;
 			payment = paymentRepo.save(payment);
 			payments.add(payment);
 
-			if (payment.getAmount() != null
-					&& payment.getAmount().compareTo(BigDecimal.ZERO) > 0
-					&& !invoiceRepo.existsByPayment_PaymentId(payment.getPaymentId())) {
-				invoiceService.generateInvoiceForPayment(admission, installment, payment);
-			}
-
 			UploadRequest receipt = request.getReceipt();
 			if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
 				FileUpload upload = buildPaymentReceiptUpload(admission, installment, payment, receipt);
 				uploadRepo.save(upload);
 			}
 
-			remaining = remaining.subtract(applied);
+			reversalRemaining = reversalRemaining.subtract(applied);
 		}
 
-		if (remaining.compareTo(BigDecimal.ZERO) > 0) {
-			throw new IllegalArgumentException("Payment exceeds pending installment totals.");
+		if (reversalRemaining.compareTo(BigDecimal.ZERO) > 0) {
+			throw new IllegalArgumentException("Reversal exceeds paid installment totals.");
 		}
+		List<Map<String, Object>> installmentChanges = new ArrayList<>();
+		for (FeeInstallment installment : installments) {
+			Map<String, Object> before = beforeInstallments.get(installment.getInstallmentId());
+			if (before == null) {
+				continue;
+			}
+			Map<String, Object> fieldChanges = new LinkedHashMap<>();
+			addChange(fieldChanges, "amountPaid", before.get("amountPaid"), installment.getAmountPaid());
+			addChange(fieldChanges, "status", before.get("status"), installment.getStatus());
+			addChange(fieldChanges, "isVerified", before.get("isVerified"), installment.getIsVerified());
+			addChange(fieldChanges, "paidOn", before.get("paidOn"), installment.getPaidOn());
+			if (!fieldChanges.isEmpty()) {
+				Map<String, Object> change = new LinkedHashMap<>();
+				change.put("installmentId", installment.getInstallmentId());
+				change.put("changes", fieldChanges);
+				installmentChanges.add(change);
+			}
+		}
+		List<Map<String, Object>> paymentDetails = new ArrayList<>();
+		for (FeeInstallmentPayment payment : payments) {
+			Map<String, Object> paymentMap = new LinkedHashMap<>();
+			paymentMap.put("paymentId", payment.getPaymentId());
+			paymentMap.put("installmentId", payment.getInstallment() != null
+					? payment.getInstallment().getInstallmentId()
+					: null);
+			paymentMap.put("amount", payment.getAmount());
+			paymentMap.put("status", payment.getStatus());
+			paymentMap.put("paidOn", payment.getPaidOn());
+			paymentDetails.add(paymentMap);
+		}
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("amount", request.getAmount());
+		details.put("mode", request.getMode());
+		details.put("txnRef", request.getTxnRef());
+		details.put("payments", paymentDetails);
+		audit(admission, "PAYMENT_APPLIED", request.getReceivedBy(), details, installmentChanges);
 		return payments;
 	}
 
@@ -591,11 +1064,23 @@ private final FileUploadRepository uploadRepo;
 			String txnRef) {
 		FeeInstallment fee = feeRepo.findById(installmentId)
 				.orElseThrow(() -> new IllegalArgumentException("Installment not found: " + installmentId));
+		BigDecimal prevAmountPaid = fee.getAmountPaid();
+		LocalDate prevPaidOn = fee.getPaidOn();
+		String prevMode = fee.getPaymentMode() != null ? fee.getPaymentMode().getCode() : null;
+		String prevTxnRef = fee.getTxnRef();
 		fee.setAmountPaid(amountPaid);
 		fee.setPaidOn(paidOn);
 		fee.setPaymentMode(mode);
 		fee.setTxnRef(txnRef);
-		return feeRepo.save(fee);
+		fee = feeRepo.save(fee);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "amountPaid", prevAmountPaid, fee.getAmountPaid());
+		addChange(changes, "paidOn", prevPaidOn, fee.getPaidOn());
+		addChange(changes, "paymentMode", prevMode, fee.getPaymentMode() != null ? fee.getPaymentMode().getCode() : null);
+		addChange(changes, "txnRef", prevTxnRef, fee.getTxnRef());
+		Admission2 admission = fee.getAdmission();
+		audit(admission, "PAYMENT_UPDATED", null, Map.of("installmentId", installmentId), changes);
+		return fee;
 	}
 
 	@Override
@@ -667,6 +1152,11 @@ private final FileUploadRepository uploadRepo;
 	public Admission2 updateCollegeVerification(Long admissionId, String status, String actor) {
 		Admission2 admission = admissionRepo.findById(admissionId)
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
+		CollegeVerificationStatus prevStatus = admission.getCollegeVerificationStatus();
+		String prevVerifiedBy = admission.getCollegeVerifiedBy();
+		LocalDateTime prevVerifiedAt = admission.getCollegeVerifiedAt();
+		String prevRejectedBy = admission.getCollegeRejectedBy();
+		LocalDateTime prevRejectedAt = admission.getCollegeRejectedAt();
 
 		CollegeVerificationStatus newStatus;
 		try {
@@ -688,7 +1178,15 @@ private final FileUploadRepository uploadRepo;
 			admission.setCollegeVerifiedAt(null);
 		}
 
-		return admissionRepo.save(admission);
+		admission = admissionRepo.save(admission);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "collegeVerificationStatus", prevStatus, admission.getCollegeVerificationStatus());
+		addChange(changes, "collegeVerifiedBy", prevVerifiedBy, admission.getCollegeVerifiedBy());
+		addChange(changes, "collegeVerifiedAt", prevVerifiedAt, admission.getCollegeVerifiedAt());
+		addChange(changes, "collegeRejectedBy", prevRejectedBy, admission.getCollegeRejectedBy());
+		addChange(changes, "collegeRejectedAt", prevRejectedAt, admission.getCollegeRejectedAt());
+		audit(admission, "COLLEGE_VERIFICATION_UPDATED", actor, Map.of("status", newStatus.name()), changes);
+		return admission;
 	}
 
 
@@ -703,7 +1201,10 @@ private final FileUploadRepository uploadRepo;
 		Admission2 admission = getAdmission(admissionId);
 		AdmissionStatus previous = admission.getStatus();
 		admission.setStatus(status);
-		admissionRepo.save(admission);
+		admission = admissionRepo.save(admission);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "status", previous, admission.getStatus());
+		audit(admission, "ADMISSION_STATUS_UPDATED", null, Map.of("admissionId", admissionId), changes);
 		if (previous != AdmissionStatus.ADMITTED && status == AdmissionStatus.ADMITTED) {
 			allocateSeatIfPossible(admission);
 		}
@@ -797,5 +1298,91 @@ private final FileUploadRepository uploadRepo;
 		cc.setAllocatedSeats(allocated + 1);
 		cc.setLastAllocatedAt(OffsetDateTime.now());
 		collegeCourseRepository.save(cc);
+	}
+
+	private void addChange(Map<String, Object> changes, String field, Object before, Object after) {
+		if (!valuesEqual(before, after)) {
+			Map<String, Object> delta = new LinkedHashMap<>();
+			delta.put("label", buildLabel(field));
+			delta.put("before", before);
+			delta.put("after", after);
+			changes.put(field, delta);
+		}
+	}
+
+	private String buildLabel(String field) {
+		if (!StringUtils.hasText(field)) {
+			return field;
+		}
+		String normalized = field.replace('.', ' ').replace('_', ' ').trim();
+		StringBuilder out = new StringBuilder();
+		char prev = 0;
+		for (int i = 0; i < normalized.length(); i++) {
+			char ch = normalized.charAt(i);
+			if (Character.isUpperCase(ch) && i > 0 && Character.isLetterOrDigit(prev) && prev != ' ') {
+				out.append(' ');
+			}
+			out.append(ch);
+			prev = ch;
+		}
+		String spaced = out.toString().trim();
+		if (spaced.isEmpty()) {
+			return field;
+		}
+		return Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1);
+	}
+
+	private boolean valuesEqual(Object before, Object after) {
+		if (before instanceof BigDecimal b1 && after instanceof BigDecimal b2) {
+			return b1.compareTo(b2) == 0;
+		}
+		return Objects.equals(before, after);
+	}
+
+	private boolean isEmptyAuditPayload(Object value) {
+		if (value == null) {
+			return true;
+		}
+		if (value instanceof Map<?, ?> map) {
+			return map.isEmpty();
+		}
+		if (value instanceof List<?> list) {
+			return list.isEmpty();
+		}
+		return false;
+	}
+
+	private String resolveAuditActor(String fallback) {
+		Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+		if (auth != null && auth.isAuthenticated()) {
+			Object principal = auth.getPrincipal();
+			if (principal instanceof Jwt jwt) {
+				String nameClaim = jwt.getClaimAsString("name");
+				if (StringUtils.hasText(nameClaim)) {
+					return nameClaim;
+				}
+				String preferred = jwt.getClaimAsString("preferred_username");
+				if (StringUtils.hasText(preferred)) {
+					return preferred;
+				}
+				String email = jwt.getClaimAsString("email");
+				if (StringUtils.hasText(email)) {
+					return email;
+				}
+			}
+			String name = auth.getName();
+			if (StringUtils.hasText(name) && !"anonymousUser".equalsIgnoreCase(name)) {
+				return name;
+			}
+		}
+		return StringUtils.hasText(fallback) ? fallback : null;
+	}
+
+	private void audit(Admission2 admission, String action, String actor, Object details, Object changedFields) {
+		if (admission == null || action == null || isEmptyAuditPayload(changedFields)) {
+			return;
+		}
+		String resolvedActor = resolveAuditActor(actor);
+		admissionAuditService.record(admission, action, resolvedActor, details, changedFields);
 	}
 }

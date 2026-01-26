@@ -14,14 +14,19 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -29,6 +34,7 @@ import org.springframework.web.bind.annotation.*;
 import com.bothash.admissionservice.dto.CreateStudentRequest;
 import com.bothash.admissionservice.dto.StudentDto;
 import com.bothash.admissionservice.enumpackage.GuardianRelation;
+import com.bothash.admissionservice.service.AdmissionAuditService;
 import com.bothash.admissionservice.service.StudentService;
 
 @RestController
@@ -43,6 +49,7 @@ public class StudentController {
   private final Admission2Repository admission2Repository;
   private final StudentsPersMappingRepository studentsPersMappingRepository;
   private final StudentOtherPaymentValueService studentOtherPaymentValueService;
+  private final AdmissionAuditService admissionAuditService;
   @PostMapping
   public ResponseEntity<Student> createOrUpdate(@RequestBody CreateStudentRequest req) {
 
@@ -73,6 +80,72 @@ public class StudentController {
       
       // If the student already exists, update their details
       if (existingStudent != null) {
+          String prevFullName = existingStudent.getFullName();
+          java.time.LocalDate prevDob = existingStudent.getDob();
+          Gender prevGender = existingStudent.getGender();
+          String prevAadhaar = existingStudent.getAadhaar();
+          String prevEmail = existingStudent.getEmail();
+          String prevNationality = existingStudent.getNationality();
+          String prevReligion = existingStudent.getReligion();
+          String prevCaste = existingStudent.getCaste();
+          String prevMobile = existingStudent.getMobile();
+          String prevAbsId = existingStudent.getAbsId();
+          String prevBloodGroup = existingStudent.getBloodGroup();
+          Integer prevAge = existingStudent.getAge();
+          String prevBatch = existingStudent.getBatch();
+          String prevRegistrationNumber = existingStudent.getRegistrationNumber();
+          Long prevCourseId = existingStudent.getCourse() != null ? existingStudent.getCourse().getCourseId() : null;
+
+          StudentAddress prevAddress = existingStudent.getAddresses().stream()
+                  .filter(a -> "current".equalsIgnoreCase(a.getType()))
+                  .findFirst()
+                  .orElse(null);
+          String prevAddressLine1 = prevAddress != null && prevAddress.getAddress() != null
+                  ? prevAddress.getAddress().getLine1()
+                  : null;
+          String prevArea = prevAddress != null && prevAddress.getAddress() != null
+                  ? prevAddress.getAddress().getArea()
+                  : null;
+          String prevCity = prevAddress != null && prevAddress.getAddress() != null
+                  ? prevAddress.getAddress().getCity()
+                  : null;
+          String prevState = prevAddress != null && prevAddress.getAddress() != null
+                  ? prevAddress.getAddress().getState()
+                  : null;
+          String prevPincode = prevAddress != null && prevAddress.getAddress() != null
+                  ? prevAddress.getAddress().getPincode()
+                  : null;
+
+          Guardian prevFather = existingStudent.getGuardians().stream()
+                  .filter(g -> g.getRelation() == GuardianRelation.Father)
+                  .findFirst()
+                  .orElse(null);
+          Guardian prevMother = existingStudent.getGuardians().stream()
+                  .filter(g -> g.getRelation() == GuardianRelation.Mother)
+                  .findFirst()
+                  .orElse(null);
+          String prevFatherName = prevFather != null ? prevFather.getFullName() : null;
+          String prevFatherMobile = prevFather != null ? prevFather.getMobile() : null;
+          String prevMotherName = prevMother != null ? prevMother.getFullName() : null;
+          String prevMotherMobile = prevMother != null ? prevMother.getMobile() : null;
+
+          SscDetails prevSsc = existingStudent.getSscDetails();
+          String prevSscBoard = prevSsc != null ? prevSsc.getBoard() : null;
+          Integer prevSscYear = prevSsc != null ? prevSsc.getPassingYear() : null;
+          Double prevSscPercent = prevSsc != null ? prevSsc.getPercentage() : null;
+          String prevSscRegNo = prevSsc != null ? prevSsc.getRegistrationNumber() : null;
+
+          HscDetails prevHsc = existingStudent.getHscDetails();
+          String prevHscCollege = prevHsc != null ? prevHsc.getCollegeName() : null;
+          String prevHscSubjects = prevHsc != null ? prevHsc.getSubjects() : null;
+          String prevHscRegNo = prevHsc != null ? prevHsc.getRegistrationNumber() : null;
+          Integer prevHscYear = prevHsc != null ? prevHsc.getPassingYear() : null;
+          Integer prevHscPhysics = prevHsc != null ? prevHsc.getPhysicsMarks() : null;
+          Integer prevHscChem = prevHsc != null ? prevHsc.getChemistryMarks() : null;
+          Integer prevHscBio = prevHsc != null ? prevHsc.getBiologyMarks() : null;
+          Double prevHscPcbPercent = prevHsc != null ? prevHsc.getPcbPercentage() : null;
+          Double prevHscPercent = prevHsc != null ? prevHsc.getPercentage() : null;
+
           existingStudent.setFullName(req.getFullName());
           existingStudent.setDob(req.getDob());
           existingStudent.setGender(req.getGender());
@@ -170,6 +243,96 @@ public class StudentController {
           sscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getSscDetails());
           hscDetailsService.saveOrUpdateByStudent(student.getStudentId(),req.getHscDetails());
           studentOtherPaymentValueService.saveValues(student.getStudentId(), req.getOtherPayments());
+
+          Admission2 admission = admission2Repository
+                  .findFirstByStudentStudentIdOrderByUpdatedAtDesc(student.getStudentId());
+          if (admission != null) {
+              Map<String, Object> changes = new LinkedHashMap<>();
+              addChange(changes, "fullName", prevFullName, student.getFullName());
+              addChange(changes, "dob", prevDob, student.getDob());
+              addChange(changes, "gender", prevGender, student.getGender());
+              addChange(changes, "aadhaar", prevAadhaar, student.getAadhaar());
+              addChange(changes, "email", prevEmail, student.getEmail());
+              addChange(changes, "nationality", prevNationality, student.getNationality());
+              addChange(changes, "religion", prevReligion, student.getReligion());
+              addChange(changes, "caste", prevCaste, student.getCaste());
+              addChange(changes, "mobile", prevMobile, student.getMobile());
+              addChange(changes, "absId", prevAbsId, student.getAbsId());
+              addChange(changes, "bloodGroup", prevBloodGroup, student.getBloodGroup());
+              addChange(changes, "age", prevAge, student.getAge());
+              addChange(changes, "batch", prevBatch, student.getBatch());
+              addChange(changes, "registrationNumber", prevRegistrationNumber, student.getRegistrationNumber());
+              addChange(changes, "courseId", prevCourseId,
+                      student.getCourse() != null ? student.getCourse().getCourseId() : null);
+
+              StudentAddress newAddress = student.getAddresses().stream()
+                      .filter(a -> "current".equalsIgnoreCase(a.getType()))
+                      .findFirst()
+                      .orElse(null);
+              addChange(changes, "address.line1", prevAddressLine1,
+                      newAddress != null && newAddress.getAddress() != null
+                              ? newAddress.getAddress().getLine1()
+                              : null);
+              addChange(changes, "address.area", prevArea,
+                      newAddress != null && newAddress.getAddress() != null
+                              ? newAddress.getAddress().getArea()
+                              : null);
+              addChange(changes, "address.city", prevCity,
+                      newAddress != null && newAddress.getAddress() != null
+                              ? newAddress.getAddress().getCity()
+                              : null);
+              addChange(changes, "address.state", prevState,
+                      newAddress != null && newAddress.getAddress() != null
+                              ? newAddress.getAddress().getState()
+                              : null);
+              addChange(changes, "address.pincode", prevPincode,
+                      newAddress != null && newAddress.getAddress() != null
+                              ? newAddress.getAddress().getPincode()
+                              : null);
+
+              Guardian newFather = student.getGuardians().stream()
+                      .filter(g -> g.getRelation() == GuardianRelation.Father)
+                      .findFirst()
+                      .orElse(null);
+              Guardian newMother = student.getGuardians().stream()
+                      .filter(g -> g.getRelation() == GuardianRelation.Mother)
+                      .findFirst()
+                      .orElse(null);
+              addChange(changes, "father.fullName", prevFatherName, newFather != null ? newFather.getFullName() : null);
+              addChange(changes, "father.mobile", prevFatherMobile, newFather != null ? newFather.getMobile() : null);
+              addChange(changes, "mother.fullName", prevMotherName, newMother != null ? newMother.getFullName() : null);
+              addChange(changes, "mother.mobile", prevMotherMobile, newMother != null ? newMother.getMobile() : null);
+
+              SscDetails newSsc = student.getSscDetails();
+              addChange(changes, "ssc.board", prevSscBoard, newSsc != null ? newSsc.getBoard() : null);
+              addChange(changes, "ssc.passingYear", prevSscYear, newSsc != null ? newSsc.getPassingYear() : null);
+              addChange(changes, "ssc.percentage", prevSscPercent, newSsc != null ? newSsc.getPercentage() : null);
+              addChange(changes, "ssc.registrationNumber", prevSscRegNo, newSsc != null ? newSsc.getRegistrationNumber() : null);
+
+              HscDetails newHsc = student.getHscDetails();
+              addChange(changes, "hsc.collegeName", prevHscCollege, newHsc != null ? newHsc.getCollegeName() : null);
+              addChange(changes, "hsc.subjects", prevHscSubjects, newHsc != null ? newHsc.getSubjects() : null);
+              addChange(changes, "hsc.registrationNumber", prevHscRegNo, newHsc != null ? newHsc.getRegistrationNumber() : null);
+              addChange(changes, "hsc.passingYear", prevHscYear, newHsc != null ? newHsc.getPassingYear() : null);
+              addChange(changes, "hsc.physicsMarks", prevHscPhysics, newHsc != null ? newHsc.getPhysicsMarks() : null);
+              addChange(changes, "hsc.chemistryMarks", prevHscChem, newHsc != null ? newHsc.getChemistryMarks() : null);
+              String newHscSubjects = newHsc != null ? newHsc.getSubjects() : null;
+              boolean isPcm = newHscSubjects != null && newHscSubjects.trim().equalsIgnoreCase("PCM");
+              String thirdSubjectField = isPcm ? "hsc.mathematicsMarks" : "hsc.biologyMarks";
+              addChange(changes, thirdSubjectField, prevHscBio, newHsc != null ? newHsc.getBiologyMarks() : null);
+              addChange(changes, "hsc.pcbPercentage", prevHscPcbPercent, newHsc != null ? newHsc.getPcbPercentage() : null);
+              addChange(changes, "hsc.percentage", prevHscPercent, newHsc != null ? newHsc.getPercentage() : null);
+
+              if (!changes.isEmpty()) {
+                  admissionAuditService.record(
+                          admission,
+                          "STUDENT_UPDATED",
+                          resolveAuditActor(null),
+                          Map.of("studentId", student.getStudentId()),
+                          changes
+                  );
+              }
+          }
       } else {
           // If the student doesn't exist, create a new one
           Student.StudentBuilder builder = Student.builder()
@@ -242,6 +405,64 @@ public class StudentController {
       }
 
       return ResponseEntity.ok(student);
+  }
+
+  private void addChange(Map<String, Object> changes, String field, Object before, Object after) {
+      if (!Objects.equals(before, after)) {
+          Map<String, Object> delta = new LinkedHashMap<>();
+          delta.put("label", buildLabel(field));
+          delta.put("before", before);
+          delta.put("after", after);
+          changes.put(field, delta);
+      }
+  }
+
+  private String buildLabel(String field) {
+      if (!StringUtils.hasText(field)) {
+          return field;
+      }
+      String normalized = field.replace('.', ' ').replace('_', ' ').trim();
+      StringBuilder out = new StringBuilder();
+      char prev = 0;
+      for (int i = 0; i < normalized.length(); i++) {
+          char ch = normalized.charAt(i);
+          if (Character.isUpperCase(ch) && i > 0 && Character.isLetterOrDigit(prev) && prev != ' ') {
+              out.append(' ');
+          }
+          out.append(ch);
+          prev = ch;
+      }
+      String spaced = out.toString().trim();
+      if (spaced.isEmpty()) {
+          return field;
+      }
+      return Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1);
+  }
+
+  private String resolveAuditActor(String fallback) {
+      Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+      if (auth != null && auth.isAuthenticated()) {
+          Object principal = auth.getPrincipal();
+          if (principal instanceof Jwt jwt) {
+              String nameClaim = jwt.getClaimAsString("name");
+              if (StringUtils.hasText(nameClaim)) {
+                  return nameClaim;
+              }
+              String preferred = jwt.getClaimAsString("preferred_username");
+              if (StringUtils.hasText(preferred)) {
+                  return preferred;
+              }
+              String email = jwt.getClaimAsString("email");
+              if (StringUtils.hasText(email)) {
+                  return email;
+              }
+          }
+          String name = auth.getName();
+          if (StringUtils.hasText(name) && !"anonymousUser".equalsIgnoreCase(name)) {
+              return name;
+          }
+      }
+      return StringUtils.hasText(fallback) ? fallback : null;
   }
 
 

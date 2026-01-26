@@ -13,16 +13,16 @@ public class HscDetails {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column
     private Integer physicsMarks; // 0–100
 
-    @Column(nullable = false)
+    @Column
     private Integer chemistryMarks; // 0–100
 
-    @Column(nullable = false)
+    @Column
     private Integer biologyMarks; // 0–100
 
-    @Column(nullable = false)
+    @Column
     private Double pcbPercentage; // derived
 
     @Column
