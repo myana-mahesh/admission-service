@@ -802,6 +802,11 @@ private final FileUploadRepository uploadRepo;
 				|| request.getAmount().compareTo(BigDecimal.ZERO) == 0) {
 			throw new IllegalArgumentException("Payment amount must be non-zero.");
 		}
+		LocalDate paidOn = request.getPaidOn() != null ? request.getPaidOn() : LocalDate.now();
+		LocalDate today = LocalDate.now();
+		if (paidOn.isAfter(today) || paidOn.isBefore(today.minusDays(1))) {
+			throw new IllegalArgumentException("Backdating allowed only up to 1 day.");
+		}
 		Admission2 admission = admissionRepo.findById(admissionId)
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
 
@@ -848,7 +853,7 @@ private final FileUploadRepository uploadRepo;
 				boolean verified = isRoleOneOf(role, "HO");
 				installment.setIsVerified(verified);
 				if (fullyPaid && installment.getPaidOn() == null) {
-					installment.setPaidOn(LocalDate.now());
+					installment.setPaidOn(paidOn);
 				}
 				feeRepo.save(installment);
 
@@ -863,7 +868,7 @@ private final FileUploadRepository uploadRepo;
 						.isVerified(verified)
 						.verifiedBy(verified ? request.getReceivedBy() : null)
 						.verifiedAt(verified ? LocalDateTime.now() : null)
-						.paidOn(LocalDate.now())
+						.paidOn(paidOn)
 						.build();
 				payment = paymentRepo.save(payment);
 				payments.add(payment);
@@ -963,7 +968,7 @@ private final FileUploadRepository uploadRepo;
 					.isVerified(verified)
 					.verifiedBy(verified ? request.getReceivedBy() : null)
 					.verifiedAt(verified ? LocalDateTime.now() : null)
-					.paidOn(LocalDate.now())
+					.paidOn(paidOn)
 					.build();
 			payment = paymentRepo.save(payment);
 			payments.add(payment);
