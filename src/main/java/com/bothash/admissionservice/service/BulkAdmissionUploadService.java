@@ -55,6 +55,7 @@ import com.bothash.admissionservice.entity.College;
 import com.bothash.admissionservice.entity.CollegeCourse;
 import com.bothash.admissionservice.entity.Course;
 import com.bothash.admissionservice.entity.CourseFeeTemplate;
+import com.bothash.admissionservice.entity.CourseFeeTemplateInstallment;
 import com.bothash.admissionservice.entity.DocumentType;
 import com.bothash.admissionservice.entity.FeeInstallment;
 import com.bothash.admissionservice.entity.FeeInstallmentPayment;
@@ -81,6 +82,7 @@ import com.bothash.admissionservice.repository.FeeInvoiceRepository;
 import com.bothash.admissionservice.repository.FeeInstallmentPaymentRepository;
 import com.bothash.admissionservice.repository.FeeInstallmentRepository;
 import com.bothash.admissionservice.repository.OtherPaymentFieldRepository;
+import com.bothash.admissionservice.repository.OtherPaymentFieldOptionRepository;
 import com.bothash.admissionservice.repository.StudentRepository;
 import com.bothash.admissionservice.service.impl.InvoiceServiceImpl;
 import com.bothash.admissionservice.service.impl.PaymentModeService;
@@ -405,6 +407,7 @@ public class BulkAdmissionUploadService {
     private final PaymentModeService paymentModeService;
     private final StudentOtherPaymentValueService studentOtherPaymentValueService;
     private final OtherPaymentFieldRepository otherPaymentFieldRepository;
+    private final OtherPaymentFieldOptionRepository otherPaymentFieldOptionRepository;
     private final SscDetailsService sscDetailsService;
     private final HscDetailsService hscDetailsService;
     private final StudentFeeScheduleService studentFeeScheduleService;
@@ -445,7 +448,10 @@ public class BulkAdmissionUploadService {
             }
             DataFormatter formatter = new DataFormatter(Locale.ENGLISH);
             Map<String, OtherPaymentField> otherPaymentByLabel = loadOtherPaymentFields();
+            Map<Long, List<com.bothash.admissionservice.entity.OtherPaymentFieldOption>> otherPaymentOptionsByField =
+                    loadOtherPaymentOptions();
             ColumnMap columnMap = buildColumnMap(sheet, formatter);
+            List<String> headerValues = readHeaderValues(sheet, formatter);
 
             int firstRow = Math.max(sheet.getFirstRowNum() + 1, 1);
             int lastRow = sheet.getLastRowNum();
@@ -458,7 +464,8 @@ public class BulkAdmissionUploadService {
                 int excelRowNumber = rowIdx + 1;
                 try {
                     txTemplate.execute(status -> {
-                        processRow(row, formatter, otherPaymentByLabel, uploadedBy, academicYearLabel, columnMap);
+                        processRow(row, formatter, otherPaymentByLabel, otherPaymentOptionsByField, uploadedBy,
+                                academicYearLabel, columnMap, headerValues);
                         return null;
                     });
                     successRows++;
@@ -540,7 +547,9 @@ public class BulkAdmissionUploadService {
     }
 
     private void processRow(Row row, DataFormatter formatter, Map<String, OtherPaymentField> otherPaymentByLabel,
-                            String uploadedBy, String academicYearLabel, ColumnMap columnMap) {
+                            Map<Long, List<com.bothash.admissionservice.entity.OtherPaymentFieldOption>> otherPaymentOptionsByField,
+                            String uploadedBy, String academicYearLabel, ColumnMap columnMap,
+                            List<String> headerValues) {
         LocalDate admissionDate = parseDate(row, formatter, COL_ADMISSION_DATE);
         if (admissionDate == null) {
             admissionDate = LocalDate.now();
@@ -557,12 +566,11 @@ public class BulkAdmissionUploadService {
         LocalDate dob = parseDate(row, formatter, COL_DOB);
 
         String courseRaw = cellValue(row, formatter, COL_COURSE);
-        Integer courseYears = parseInteger(cellValue(row, formatter, COL_COURSE_DURATION));
-        Course course = resolveOrCreateCourse(courseRaw, courseYears);
+        Course course = resolveCourse(courseRaw);
         if (course == null) {
             throw new IllegalArgumentException("Course not found: " + courseRaw);
         }
-        int resolvedCourseYears = course.getYears() != null && course.getYears() > 0 ? course.getYears() : 1;
+        int resolvedCourseYears = resolveCourseYears(course);
 
         String branchRaw = cellValue(row, formatter, COL_BRANCH);
         BranchMaster admissionBranch = resolveOrCreateBranch(branchRaw);
@@ -597,7 +605,7 @@ public class BulkAdmissionUploadService {
         }
 
         Student student = upsertStudent(row, formatter, studentName, studentMobile, gender, dob, course, absId,
-                registrationNumber);
+                registrationNumber, headerValues);
 
         CreateAdmissionRequest admissionRequest = buildAdmissionRequest(row, formatter, student, course, college,
                 admissionBranch, lectureBranch, admissionDate, academicYearLabel);
@@ -611,15 +619,15 @@ public class BulkAdmissionUploadService {
         }
 
         applyDocumentChecklist(admission, row, formatter);
-        applyOtherPayments(student, row, formatter, otherPaymentByLabel);
-        applyInstallmentPlan(admission, row, formatter, columnMap, resolvedCourseYears);
+        applyOtherPayments(student, row, formatter, otherPaymentByLabel, otherPaymentOptionsByField, headerValues);
+        applyInstallmentPlanFromCourse(admission, row, formatter, course, admissionDate);
         applyPaymentHistory(admission, row, formatter, uploadedBy, columnMap);
         applyFeeScheduleAndComment(student, row, formatter, uploadedBy);
     }
 
     private Student upsertStudent(Row row, DataFormatter formatter, String studentName, String studentMobile,
                                   Gender gender, LocalDate dob, Course course, String absId,
-                                  String registrationNumber) {
+                                  String registrationNumber, List<String> headerValues) {
         Student existing = studentRepository.findByMobile(studentMobile.trim());
         String bloodGroup = cellValue(row, formatter, COL_BLOOD_GROUP);
         String email = cellValue(row, formatter, COL_EMAIL);
@@ -702,7 +710,7 @@ public class BulkAdmissionUploadService {
 
         student = studentRepository.save(student);
         upsertSscDetails(student, row, formatter);
-        upsertHscDetails(student, row, formatter);
+        upsertHscDetails(student, row, formatter, headerValues);
         return student;
     }
 
@@ -721,23 +729,39 @@ public class BulkAdmissionUploadService {
         sscDetailsService.saveOrUpdateByStudent(student.getStudentId(), ssc);
     }
 
-    private void upsertHscDetails(Student student, Row row, DataFormatter formatter) {
-        String collegeName = cellValue(row, formatter, COL_HSC_COLLEGE);
-        Integer year = parseInteger(cellValue(row, formatter, COL_HSC_YEAR));
+    private void upsertHscDetails(Student student, Row row, DataFormatter formatter, List<String> headerValues) {
+        String collegeName = cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_COLLEGE],
+                COL_HSC_COLLEGE);
+        Integer year = parseInteger(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_YEAR],
+                COL_HSC_YEAR));
         if (!StringUtils.hasText(collegeName) || year == null) {
             return;
         }
+        String subjectsRaw = cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_SUBJECTS],
+                COL_HSC_SUBJECTS);
+        HscSubjectMarks parsed = parseHscSubjects(subjectsRaw);
         HscDetails hsc = new HscDetails();
         hsc.setCollegeName(collegeName);
         hsc.setPassingYear(year);
-        hsc.setRegistrationNumber(cellValue(row, formatter, COL_HSC_REG_NO));
-        hsc.setSubjects(cellValue(row, formatter, COL_HSC_SUBJECTS));
-        hsc.setPercentage(parseDouble(cellValue(row, formatter, COL_HSC_PERCENT)));
-        hsc.setPhysicsMarks(0);
-        hsc.setChemistryMarks(0);
-        hsc.setBiologyMarks(0);
-        Double pcb = parseDouble(cellValue(row, formatter, COL_HSC_PCB_PERCENT));
-        hsc.setPcbPercentage(pcb != null ? pcb : 0.0);
+        hsc.setRegistrationNumber(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_REG_NO],
+                COL_HSC_REG_NO));
+        hsc.setSubjects(parsed != null && StringUtils.hasText(parsed.subjects())
+                ? parsed.subjects()
+                : subjectsRaw);
+        hsc.setPercentage(parseDouble(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_PERCENT],
+                COL_HSC_PERCENT)));
+        if (parsed != null) {
+            hsc.setPhysicsMarks(parsed.physics());
+            hsc.setChemistryMarks(parsed.chemistry());
+            hsc.setBiologyMarks(parsed.biology());
+        }
+        Double pcb = parseDouble(cellValueByHeader(row, formatter, headerValues,
+                TEMPLATE_HEADERS[COL_HSC_PCB_PERCENT], COL_HSC_PCB_PERCENT));
+        if (pcb == null && parsed != null && parsed.physics() != null && parsed.chemistry() != null
+                && parsed.biology() != null) {
+            pcb = (parsed.physics() + parsed.chemistry() + parsed.biology()) / 3.0;
+        }
+        hsc.setPcbPercentage(pcb);
         hscDetailsService.saveOrUpdateByStudent(student.getStudentId(), hsc);
     }
 
@@ -746,6 +770,9 @@ public class BulkAdmissionUploadService {
                                                          BranchMaster lectureBranch, LocalDate admissionDate,
                                                          String academicYearLabel) {
         BigDecimal totalFees = parseBigDecimal(cellValue(row, formatter, COL_TOTAL_FEES));
+        if (totalFees == null && course != null && course.getCourseFeeTemplate() != null) {
+            totalFees = course.getCourseFeeTemplate().getTotalAmount();
+        }
         Double totalFeesValue = totalFees != null ? totalFees.doubleValue() : null;
         String batch = resolveBatchCode(cellValue(row, formatter, COL_BATCH));
         String reference = cellValue(row, formatter, COL_REFERENCE);
@@ -758,7 +785,7 @@ public class BulkAdmissionUploadService {
                 .dateOfAdmission(admissionDate)
                 .build();
 
-        int installments = countInstallments(row, formatter);
+        int installments = countInstallmentsFromCourse(course);
 
         return CreateAdmissionRequest.builder()
                 .studentId(student.getStudentId())
@@ -814,14 +841,31 @@ public class BulkAdmissionUploadService {
     }
 
     private void applyOtherPayments(Student student, Row row, DataFormatter formatter,
-                                    Map<String, OtherPaymentField> otherPaymentByLabel) {
+                                    Map<String, OtherPaymentField> otherPaymentByLabel,
+                                    Map<Long, List<com.bothash.admissionservice.entity.OtherPaymentFieldOption>> otherPaymentOptionsByField,
+                                    List<String> headerValues) {
         if (otherPaymentByLabel.isEmpty()) {
             return;
         }
-        List<OtherPaymentFieldValueRequest> requests = new ArrayList<>();
-        for (int col = COL_OTHER_PAYMENTS_START; col <= COL_OTHER_PAYMENTS_END; col++) {
-            String header = TEMPLATE_HEADERS[col];
-            OtherPaymentField field = otherPaymentByLabel.get(normalize(header));
+        List<String> headers = headerValues != null ? headerValues : List.of();
+        String ignoreAbsId = normalize(TEMPLATE_HEADERS[COL_ABS_ID]);
+        String ignoreMonth = normalize(TEMPLATE_HEADERS[COL_MONTH]);
+        String ignoreCollegeFees = normalize(TEMPLATE_HEADERS[COL_COLLEGE_FEES]);
+        Map<Long, List<OtherPaymentValueEntryDto>> entriesByField = new HashMap<>();
+        int totalCols = Math.max(TEMPLATE_HEADERS.length, headers.size());
+        for (int col = 0; col < totalCols; col++) {
+            String header = col < headers.size() ? headers.get(col) : null;
+            if (!StringUtils.hasText(header) && col < TEMPLATE_HEADERS.length) {
+                header = TEMPLATE_HEADERS[col];
+            }
+            if (!StringUtils.hasText(header)) {
+                continue;
+            }
+            String key = normalize(header);
+            if (ignoreAbsId.equals(key) || ignoreMonth.equals(key) || ignoreCollegeFees.equals(key)) {
+                continue;
+            }
+            OtherPaymentField field = otherPaymentByLabel.get(key);
             if (field == null) {
                 continue;
             }
@@ -829,60 +873,170 @@ public class BulkAdmissionUploadService {
             if (!StringUtils.hasText(value)) {
                 continue;
             }
-            OtherPaymentValueEntryDto entry = OtherPaymentValueEntryDto.builder()
-                    .value(value.trim())
-                    .build();
-            OtherPaymentFieldValueRequest request = OtherPaymentFieldValueRequest.builder()
-                    .fieldId(field.getId())
-                    .entries(List.of(entry))
-                    .build();
-            requests.add(request);
+            OtherPaymentValueEntryDto entry = resolveOtherPaymentEntry(field, value.trim(), otherPaymentOptionsByField);
+            if (entry == null) {
+                continue;
+            }
+            entriesByField.computeIfAbsent(field.getId(), id -> new ArrayList<>()).add(entry);
+        }
+        List<OtherPaymentFieldValueRequest> requests = new ArrayList<>();
+        for (Map.Entry<Long, List<OtherPaymentValueEntryDto>> entry : entriesByField.entrySet()) {
+            if (entry.getValue().isEmpty()) {
+                continue;
+            }
+            requests.add(OtherPaymentFieldValueRequest.builder()
+                    .fieldId(entry.getKey())
+                    .entries(entry.getValue())
+                    .build());
         }
         if (!requests.isEmpty()) {
             studentOtherPaymentValueService.saveValues(student.getStudentId(), requests);
         }
     }
 
-    private void applyInstallmentPlan(Admission2 admission, Row row, DataFormatter formatter, ColumnMap columnMap,
-                                      int courseYears) {
-        String mode = cellValue(row, formatter, COL_PAY_MODE);
-        List<PlanEntry> planEntries = new ArrayList<>();
-        planEntries.add(new PlanEntry(cellValue(row, formatter, columnMap.installment1Amt),
-                parseDate(row, formatter, columnMap.installment1Due),
-                parseInteger(cellValue(row, formatter, columnMap.installment1Year))));
-        planEntries.add(new PlanEntry(cellValue(row, formatter, columnMap.installment2Amt),
-                parseDate(row, formatter, columnMap.installment2Due),
-                parseInteger(cellValue(row, formatter, columnMap.installment2Year))));
-        planEntries.add(new PlanEntry(cellValue(row, formatter, columnMap.installment3Amt),
-                parseDate(row, formatter, columnMap.installment3Due),
-                parseInteger(cellValue(row, formatter, columnMap.installment3Year))));
-        planEntries.add(new PlanEntry(cellValue(row, formatter, columnMap.installment4Amt),
-                parseDate(row, formatter, columnMap.installment4Due),
-                parseInteger(cellValue(row, formatter, columnMap.installment4Year))));
+    private OtherPaymentValueEntryDto resolveOtherPaymentEntry(OtherPaymentField field, String rawValue,
+            Map<Long, List<com.bothash.admissionservice.entity.OtherPaymentFieldOption>> otherPaymentOptionsByField) {
+        if (field == null || !StringUtils.hasText(rawValue)) {
+            return null;
+        }
+        String trimmed = rawValue.trim();
+        List<com.bothash.admissionservice.entity.OtherPaymentFieldOption> options = otherPaymentOptionsByField
+                .getOrDefault(field.getId(), List.of());
+        if (!options.isEmpty()) {
+            com.bothash.admissionservice.entity.OtherPaymentFieldOption match = matchOtherPaymentOption(options,
+                    trimmed);
+            if (match != null) {
+                return OtherPaymentValueEntryDto.builder()
+                        .optionId(match.getId())
+                        .value(match.getValue())
+                        .build();
+            }
+        }
+        return OtherPaymentValueEntryDto.builder()
+                .value(trimmed)
+                .build();
+    }
 
-        Map<Integer, Integer> installmentNoByYear = new HashMap<>();
-        for (PlanEntry entry : planEntries) {
-            BigDecimal amount = parseBigDecimal(entry.amountRaw);
-            if (amount == null && entry.dueDate == null) {
+    private com.bothash.admissionservice.entity.OtherPaymentFieldOption matchOtherPaymentOption(
+            List<com.bothash.admissionservice.entity.OtherPaymentFieldOption> options, String rawValue) {
+        String normalized = normalizeOptionValue(rawValue);
+        if (!StringUtils.hasText(normalized)) {
+            return null;
+        }
+        String normalizedAlt = "YES".equals(normalized) ? "YS" : ("YS".equals(normalized) ? "YES" : normalized);
+        for (com.bothash.admissionservice.entity.OtherPaymentFieldOption option : options) {
+            if (option == null) {
                 continue;
             }
-            int maxYears = courseYears > 0 ? courseYears : 1;
-            int studyYear = entry.studyYear != null && entry.studyYear > 0 ? entry.studyYear : 1;
-            if (studyYear > maxYears) {
-                studyYear = maxYears;
+            String optValue = normalizeOptionValue(option.getValue());
+            String optLabel = normalizeOptionValue(option.getLabel());
+            if (normalized.equals(optValue) || normalized.equals(optLabel)
+                    || normalizedAlt.equals(optValue) || normalizedAlt.equals(optLabel)) {
+                return option;
             }
-            int installmentNo = installmentNoByYear.getOrDefault(studyYear, 0) + 1;
-            installmentNoByYear.put(studyYear, installmentNo);
+        }
+        return null;
+    }
+
+    private String normalizeOptionValue(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String cleaned = value.trim().toUpperCase(Locale.ENGLISH).replaceAll("[^A-Z0-9]+", "");
+        if ("Y".equals(cleaned)) {
+            return "YES";
+        }
+        if ("N".equals(cleaned) || "NO".equals(cleaned)) {
+            return "NO";
+        }
+        return cleaned;
+    }
+
+    private List<String> readHeaderValues(Sheet sheet, DataFormatter formatter) {
+        Row header = sheet.getRow(sheet.getFirstRowNum());
+        int lastCellNum = header != null ? header.getLastCellNum() : 0;
+        int size = Math.max(TEMPLATE_HEADERS.length, Math.max(0, lastCellNum));
+        List<String> headers = new ArrayList<>(size);
+        for (int col = 0; col < size; col++) {
+            String value = header != null ? cellValue(header, formatter, col) : null;
+            if (!StringUtils.hasText(value) && col < TEMPLATE_HEADERS.length) {
+                value = TEMPLATE_HEADERS[col];
+            }
+            headers.add(StringUtils.hasText(value) ? value.trim() : null);
+        }
+        return headers;
+    }
+
+    private String cellValueByHeader(Row row, DataFormatter formatter, List<String> headerValues, String headerLabel,
+                                     int fallbackCol) {
+        Integer col = findHeaderIndex(headerValues, headerLabel);
+        int resolved = col != null ? col : fallbackCol;
+        return cellValue(row, formatter, resolved);
+    }
+
+    private Integer findHeaderIndex(List<String> headerValues, String headerLabel) {
+        if (headerValues == null || headerValues.isEmpty() || !StringUtils.hasText(headerLabel)) {
+            return null;
+        }
+        String target = normalize(headerLabel);
+        if (!StringUtils.hasText(target)) {
+            return null;
+        }
+        for (int i = 0; i < headerValues.size(); i++) {
+            String value = headerValues.get(i);
+            if (!StringUtils.hasText(value)) {
+                continue;
+            }
+            if (target.equals(normalize(value))) {
+                return i;
+            }
+        }
+        return null;
+    }
+
+    private Map<Long, List<com.bothash.admissionservice.entity.OtherPaymentFieldOption>> loadOtherPaymentOptions() {
+        List<com.bothash.admissionservice.entity.OtherPaymentFieldOption> options = otherPaymentFieldOptionRepository
+                .findAll();
+        Map<Long, List<com.bothash.admissionservice.entity.OtherPaymentFieldOption>> byField = new HashMap<>();
+        for (com.bothash.admissionservice.entity.OtherPaymentFieldOption option : options) {
+            if (option == null || option.getField() == null || option.getField().getId() == null) {
+                continue;
+            }
+            byField.computeIfAbsent(option.getField().getId(), id -> new ArrayList<>()).add(option);
+        }
+        return byField;
+    }
+
+    private void applyInstallmentPlanFromCourse(Admission2 admission, Row row, DataFormatter formatter, Course course,
+                                                LocalDate admissionDate) {
+        String mode = cellValue(row, formatter, COL_PAY_MODE);
+        List<CourseFeeTemplateInstallment> templates = getCourseTemplateInstallments(course);
+        int courseYears = resolveCourseYears(course);
+        Map<Integer, Integer> installmentNoByYear = new HashMap<>();
+
+        if (templates.isEmpty()) {
             admissionService.upsertInstallment(
                     admission.getAdmissionId(),
-                    studyYear,
-                    installmentNo,
-                    amount != null ? amount : BigDecimal.ZERO,
-                    entry.dueDate,
+                    1,
+                    1,
+                    BigDecimal.ZERO,
+                    null,
                     StringUtils.hasText(mode) ? mode.trim() : null,
                     "bulk-upload",
                     "Un Paid"
             );
+            return;
+        }
+
+        for (CourseFeeTemplateInstallment template : templates) {
+            Integer templateYear = normalizeTemplateYear(template.getYearNumber(), courseYears);
+            if (templateYear == null) {
+                for (int year = 1; year <= courseYears; year++) {
+                    addInstallmentFromTemplate(admission, template, year, admissionDate, mode, installmentNoByYear);
+                }
+                continue;
+            }
+            addInstallmentFromTemplate(admission, template, templateYear, admissionDate, mode, installmentNoByYear);
         }
     }
 
@@ -1171,6 +1325,101 @@ public class BulkAdmissionUploadService {
         created.setYears(years != null && years > 0 ? years : 1);
         created.setCourseFeeTemplate(template);
         return courseRepository.save(created);
+    }
+
+    private int resolveCourseYears(Course course) {
+        return course != null && course.getYears() != null && course.getYears() > 0 ? course.getYears() : 1;
+    }
+
+    private List<CourseFeeTemplateInstallment> getCourseTemplateInstallments(Course course) {
+        if (course == null || course.getCourseFeeTemplate() == null) {
+            return List.of();
+        }
+        List<CourseFeeTemplateInstallment> installments = course.getCourseFeeTemplate().getInstallments();
+        if (installments == null || installments.isEmpty()) {
+            return List.of();
+        }
+        return installments.stream()
+                .filter(inst -> inst != null)
+                .sorted((a, b) -> {
+                    int yearA = a.getYearNumber() != null ? a.getYearNumber() : 0;
+                    int yearB = b.getYearNumber() != null ? b.getYearNumber() : 0;
+                    int cmp = Integer.compare(yearA, yearB);
+                    if (cmp != 0) {
+                        return cmp;
+                    }
+                    int seqA = a.getSequence() != null ? a.getSequence() : 0;
+                    int seqB = b.getSequence() != null ? b.getSequence() : 0;
+                    return Integer.compare(seqA, seqB);
+                })
+                .toList();
+    }
+
+    private Integer normalizeTemplateYear(Integer yearNumber, int courseYears) {
+        if (yearNumber == null || yearNumber <= 0) {
+            return null;
+        }
+        if (yearNumber > courseYears) {
+            return courseYears;
+        }
+        return yearNumber;
+    }
+
+    private void addInstallmentFromTemplate(Admission2 admission, CourseFeeTemplateInstallment template, int studyYear,
+                                            LocalDate admissionDate, String mode,
+                                            Map<Integer, Integer> installmentNoByYear) {
+        int installmentNo = installmentNoByYear.getOrDefault(studyYear, 0) + 1;
+        installmentNoByYear.put(studyYear, installmentNo);
+        BigDecimal amount = template.getAmount() != null ? template.getAmount() : BigDecimal.ZERO;
+        LocalDate dueDate = resolveTemplateDueDate(template, admissionDate, studyYear);
+        admissionService.upsertInstallment(
+                admission.getAdmissionId(),
+                studyYear,
+                installmentNo,
+                amount,
+                dueDate,
+                StringUtils.hasText(mode) ? mode.trim() : null,
+                "bulk-upload",
+                "Un Paid"
+        );
+    }
+
+    private LocalDate resolveTemplateDueDate(CourseFeeTemplateInstallment template, LocalDate admissionDate,
+                                             int studyYear) {
+        if (template == null || admissionDate == null) {
+            return null;
+        }
+        Integer dueMonth = template.getDueMonth();
+        Integer dueDay = template.getDueDayOfMonth();
+        if (dueMonth == null || dueDay == null) {
+            return null;
+        }
+        int year = admissionDate.getYear() + Math.max(0, studyYear - 1);
+        try {
+            java.time.YearMonth ym = java.time.YearMonth.of(year, dueMonth);
+            int day = Math.min(dueDay, ym.lengthOfMonth());
+            return java.time.LocalDate.of(year, dueMonth, day);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private int countInstallmentsFromCourse(Course course) {
+        int courseYears = resolveCourseYears(course);
+        List<CourseFeeTemplateInstallment> templates = getCourseTemplateInstallments(course);
+        if (templates.isEmpty()) {
+            return 1;
+        }
+        int count = 0;
+        for (CourseFeeTemplateInstallment template : templates) {
+            Integer templateYear = normalizeTemplateYear(template.getYearNumber(), courseYears);
+            if (templateYear == null) {
+                count += courseYears;
+            } else {
+                count += 1;
+            }
+        }
+        return Math.max(1, count);
     }
 
     private BranchMaster resolveOrCreateBranch(String raw) {
@@ -1691,6 +1940,34 @@ public class BulkAdmissionUploadService {
             cleaned = cleaned.substring(0, 64).trim();
         }
         return cleaned;
+    }
+
+    private HscSubjectMarks parseHscSubjects(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        String[] parts = trimmed.split("-", 2);
+        String subjectPart = parts[0].trim().toUpperCase(Locale.ENGLISH);
+        String marksPart = parts.length > 1 ? parts[1].trim() : null;
+        Integer physics = null;
+        Integer chemistry = null;
+        Integer biology = null;
+        if (StringUtils.hasText(marksPart)) {
+            String[] marks = marksPart.split("[/|,]");
+            if (marks.length >= 3) {
+                physics = parseInteger(marks[0].trim());
+                chemistry = parseInteger(marks[1].trim());
+                biology = parseInteger(marks[2].trim());
+            }
+        }
+        if (!StringUtils.hasText(subjectPart)) {
+            return null;
+        }
+        return new HscSubjectMarks(subjectPart, physics, chemistry, biology);
+    }
+
+    private record HscSubjectMarks(String subjects, Integer physics, Integer chemistry, Integer biology) {
     }
 
     private record PlanEntry(String amountRaw, LocalDate dueDate, Integer studyYear) {
