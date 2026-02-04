@@ -30,6 +30,9 @@ import com.bothash.admissionservice.dto.InstallmentUpsertRequest;
 import com.bothash.admissionservice.dto.MultipleUploadRequest;
 import com.bothash.admissionservice.dto.PartialPaymentRequest;
 import com.bothash.admissionservice.dto.UploadRequest;
+import com.bothash.admissionservice.dto.AdmissionOtherPaymentDto;
+import com.bothash.admissionservice.dto.AdmissionOtherPaymentRequest;
+import com.bothash.admissionservice.dto.AdmissionOtherPaymentReturnRequest;
 import com.bothash.admissionservice.dto.AdmissionDocumentReturnRequest;
 import com.bothash.admissionservice.dto.AdmissionDocumentResubmissionRequest;
 import com.bothash.admissionservice.dto.StudentAdditionalQualificationDto;
@@ -51,6 +54,7 @@ private final AdmissionDocumentRepository admDocRepo;
 private final FileUploadRepository uploadRepo;
 	private final AdmissionDocumentReturnRepository admissionDocumentReturnRepository;
 	private final StudentAdditionalQualificationRepository studentAdditionalQualificationRepository;
+	private final AdmissionOtherPaymentRepository admissionOtherPaymentRepository;
 	private final FeeInstallmentRepository feeRepo;
 	private final FeeInstallmentPaymentRepository paymentRepo;
 	private final AdmissionSignoffRepository signoffRepo;
@@ -612,6 +616,153 @@ private final FileUploadRepository uploadRepo;
 	}
 
 	@Override
+	@Transactional(readOnly = true)
+	public List<AdmissionOtherPaymentDto> listOtherPayments(Long admissionId) {
+		admissionRepo.findById(admissionId)
+				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
+		return admissionOtherPaymentRepository.findByAdmissionAdmissionIdOrderByPaidOnDescPaymentIdDesc(admissionId)
+				.stream()
+				.map(this::toOtherPaymentDto)
+				.toList();
+	}
+
+	@Override
+	public AdmissionOtherPaymentDto addOtherPayment(Long admissionId, AdmissionOtherPaymentRequest request) {
+		Admission2 admission = admissionRepo.findById(admissionId)
+				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
+		if (request == null || request.getAmount() == null || request.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+			throw new IllegalArgumentException("Amount must be greater than zero.");
+		}
+
+		AdmissionOtherPayment payment = new AdmissionOtherPayment();
+		payment.setAdmission(admission);
+		payment.setAmount(request.getAmount());
+		payment.setReturnedAmount(BigDecimal.ZERO);
+		payment.setPaidOn(request.getPaidOn() != null ? request.getPaidOn() : LocalDate.now());
+		payment.setTxnRef(normalizeToNull(request.getTxnRef()));
+		payment.setCategory(normalizeToNull(request.getCategory()));
+		payment.setRemarks(normalizeToNull(request.getRemarks()));
+		payment.setReceivedBy(normalizeToNull(request.getReceivedBy()));
+		payment.setPaymentMode(resolvePaymentMode(request.getMode()));
+
+		UploadRequest receipt = request.getReceipt();
+		if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
+			payment.setReceiptName(normalizeToNull(receipt.getFilename()));
+			payment.setReceiptMimeType(normalizeToNull(receipt.getMimeType()));
+			payment.setReceiptSizeBytes(receipt.getSizeBytes());
+			payment.setReceiptStorageUrl(normalizeToNull(receipt.getStorageUrl()));
+			payment.setReceiptSha256(normalizeToNull(receipt.getSha256()));
+		}
+
+		payment = admissionOtherPaymentRepository.save(payment);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "otherPayment.amount", null, payment.getAmount());
+		addChange(changes, "otherPayment.paidOn", null, payment.getPaidOn());
+		addChange(changes, "otherPayment.mode", null,
+				payment.getPaymentMode() != null ? payment.getPaymentMode().getCode() : null);
+		addChange(changes, "otherPayment.txnRef", null, payment.getTxnRef());
+		addChange(changes, "otherPayment.category", null, payment.getCategory());
+		addChange(changes, "otherPayment.remarks", null, payment.getRemarks());
+		addChange(changes, "otherPayment.receivedBy", null, payment.getReceivedBy());
+		addChange(changes, "otherPayment.receiptName", null, payment.getReceiptName());
+		audit(admission, "OTHER_PAYMENT_ADDED", request.getReceivedBy(),
+				Map.of("paymentId", payment.getPaymentId()), changes);
+		return toOtherPaymentDto(payment);
+	}
+
+	@Override
+	public AdmissionOtherPaymentDto addOtherPaymentReturn(Long admissionId, AdmissionOtherPaymentReturnRequest request) {
+		Admission2 admission = admissionRepo.findById(admissionId)
+				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
+		if (request == null || request.getReferencePaymentId() == null) {
+			throw new IllegalArgumentException("Reference payment is required.");
+		}
+		if (request.getReturnAmount() == null || request.getReturnAmount().compareTo(BigDecimal.ZERO) <= 0) {
+			throw new IllegalArgumentException("Return amount must be greater than zero.");
+		}
+
+		AdmissionOtherPayment reference = admissionOtherPaymentRepository.findById(request.getReferencePaymentId())
+				.orElseThrow(() -> new IllegalArgumentException("Reference payment not found: " + request.getReferencePaymentId()));
+		if (!Objects.equals(reference.getAdmission().getAdmissionId(), admissionId)) {
+			throw new IllegalArgumentException("Reference payment does not belong to this admission.");
+		}
+		if (reference.getReferencePayment() != null) {
+			throw new IllegalArgumentException("Cannot return against a return payment.");
+		}
+
+		BigDecimal existingReturned = reference.getReturnedAmount() != null ? reference.getReturnedAmount() : BigDecimal.ZERO;
+		BigDecimal updatedReturned = existingReturned.add(request.getReturnAmount());
+		if (updatedReturned.compareTo(reference.getAmount()) > 0) {
+			throw new IllegalArgumentException("Return amount exceeds original payment amount.");
+		}
+
+		AdmissionOtherPayment payment = new AdmissionOtherPayment();
+		payment.setAdmission(admission);
+		payment.setReferencePayment(reference);
+		payment.setAmount(request.getReturnAmount().negate());
+		payment.setReturnedAmount(BigDecimal.ZERO);
+		payment.setPaidOn(request.getPaidOn() != null ? request.getPaidOn() : LocalDate.now());
+		payment.setTxnRef(normalizeToNull(request.getTxnRef()));
+		payment.setCategory(normalizeToNull(request.getCategory()));
+		payment.setRemarks(normalizeToNull(request.getRemarks()));
+		payment.setReceivedBy(normalizeToNull(request.getReceivedBy()));
+		payment.setPaymentMode(resolvePaymentMode(request.getMode()));
+
+		UploadRequest receipt = request.getReceipt();
+		if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
+			payment.setReceiptName(normalizeToNull(receipt.getFilename()));
+			payment.setReceiptMimeType(normalizeToNull(receipt.getMimeType()));
+			payment.setReceiptSizeBytes(receipt.getSizeBytes());
+			payment.setReceiptStorageUrl(normalizeToNull(receipt.getStorageUrl()));
+			payment.setReceiptSha256(normalizeToNull(receipt.getSha256()));
+		}
+
+		reference.setReturnedAmount(updatedReturned);
+		admissionOtherPaymentRepository.save(reference);
+		payment = admissionOtherPaymentRepository.save(payment);
+
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "otherPayment.return.referencePaymentId", null, reference.getPaymentId());
+		addChange(changes, "otherPayment.return.amount", null, payment.getAmount());
+		addChange(changes, "otherPayment.return.paidOn", null, payment.getPaidOn());
+		addChange(changes, "otherPayment.returnedAmount", existingReturned, updatedReturned);
+		addChange(changes, "otherPayment.return.receiptName", null, payment.getReceiptName());
+		audit(admission, "OTHER_PAYMENT_RETURN_ADDED", request.getReceivedBy(),
+				Map.of("paymentId", payment.getPaymentId()), changes);
+		return toOtherPaymentDto(payment);
+	}
+
+	@Override
+	public void deleteOtherPayment(Long admissionId, Long paymentId) {
+		Admission2 admission = admissionRepo.findById(admissionId)
+				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
+		AdmissionOtherPayment payment = admissionOtherPaymentRepository.findById(paymentId)
+				.orElseThrow(() -> new IllegalArgumentException("Other payment not found: " + paymentId));
+		if (!Objects.equals(payment.getAdmission().getAdmissionId(), admissionId)) {
+			throw new IllegalArgumentException("Payment does not belong to this admission.");
+		}
+		if (payment.getReferencePayment() == null) {
+			List<AdmissionOtherPayment> returns = admissionOtherPaymentRepository.findByReferencePaymentPaymentId(paymentId);
+			if (!returns.isEmpty()) {
+				throw new IllegalArgumentException("Cannot delete payment with linked return records.");
+			}
+		} else {
+			AdmissionOtherPayment reference = payment.getReferencePayment();
+			BigDecimal existingReturned = reference.getReturnedAmount() != null ? reference.getReturnedAmount() : BigDecimal.ZERO;
+			BigDecimal adjusted = existingReturned.subtract(payment.getAmount().abs());
+			if (adjusted.compareTo(BigDecimal.ZERO) < 0) {
+				adjusted = BigDecimal.ZERO;
+			}
+			reference.setReturnedAmount(adjusted);
+			admissionOtherPaymentRepository.save(reference);
+		}
+		admissionOtherPaymentRepository.delete(payment);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "otherPayment.deletedPaymentId", null, paymentId);
+		audit(admission, "OTHER_PAYMENT_DELETED", null, Map.of("paymentId", paymentId), changes);
+	}
+
+	@Override
 	public FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
 			LocalDate dueDate, String mode, String receivedBy, String status) {
 		Admission2 a = admissionRepo.findById(admissionId)
@@ -1052,6 +1203,54 @@ private final FileUploadRepository uploadRepo;
 		return upload;
 	}
 
+	private AdmissionOtherPaymentDto toOtherPaymentDto(AdmissionOtherPayment payment) {
+		BigDecimal amount = payment.getAmount() != null ? payment.getAmount() : BigDecimal.ZERO;
+		BigDecimal returnedAmount = payment.getReturnedAmount() != null ? payment.getReturnedAmount() : BigDecimal.ZERO;
+		return AdmissionOtherPaymentDto.builder()
+				.paymentId(payment.getPaymentId())
+				.admissionId(payment.getAdmission() != null ? payment.getAdmission().getAdmissionId() : null)
+				.amount(amount)
+				.returnedAmount(returnedAmount)
+				.netAmount(amount.subtract(returnedAmount))
+				.paidOn(payment.getPaidOn())
+				.paymentMode(payment.getPaymentMode() != null ? payment.getPaymentMode().getCode() : null)
+				.txnRef(payment.getTxnRef())
+				.category(payment.getCategory())
+				.remarks(payment.getRemarks())
+				.receivedBy(payment.getReceivedBy())
+				.referencePaymentId(payment.getReferencePayment() != null ? payment.getReferencePayment().getPaymentId() : null)
+				.receiptName(payment.getReceiptName())
+				.receiptUrl(payment.getReceiptStorageUrl())
+				.build();
+	}
+
+	private PaymentModeMaster resolvePaymentMode(String mode) {
+		if (!StringUtils.hasText(mode)) {
+			return null;
+		}
+		String normalized = mode.trim();
+		PaymentModeMaster byMode = service.getByMode(normalized);
+		if (byMode != null) {
+			return byMode;
+		}
+		Optional<PaymentModeMaster> byCode = service.findByCode(normalized);
+		if (byCode.isPresent()) {
+			PaymentModeMaster existing = byCode.get();
+			if (!existing.isActive()) {
+				existing.setActive(true);
+				existing = service.save(existing);
+			}
+			return existing;
+		}
+		PaymentModeMaster created = PaymentModeMaster.builder()
+				.code(normalized)
+				.label(normalized)
+				.displayOrder(0)
+				.active(true)
+				.build();
+		return service.save(created);
+	}
+
 
 	@Override
 	  @Transactional
@@ -1313,6 +1512,13 @@ private final FileUploadRepository uploadRepo;
 			delta.put("after", after);
 			changes.put(field, delta);
 		}
+	}
+
+	private String normalizeToNull(String value) {
+		if (!StringUtils.hasText(value)) {
+			return null;
+		}
+		return value.trim();
 	}
 
 	private String buildLabel(String field) {

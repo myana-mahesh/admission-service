@@ -34,6 +34,9 @@ public class HscDetails {
     @Column(length = 150)
     private String subjects; // optional text
 
+    @Column(length = 150)
+    private String board;
+
     @Column(length = 50)
     private String registrationNumber;
 

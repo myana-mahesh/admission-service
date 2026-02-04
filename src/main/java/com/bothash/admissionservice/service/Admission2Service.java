@@ -9,6 +9,9 @@ import com.bothash.admissionservice.dto.CreateAdmissionRequest;
 import com.bothash.admissionservice.dto.InstallmentUpsertRequest;
 import com.bothash.admissionservice.dto.MultipleUploadRequest;
 import com.bothash.admissionservice.dto.PartialPaymentRequest;
+import com.bothash.admissionservice.dto.AdmissionOtherPaymentDto;
+import com.bothash.admissionservice.dto.AdmissionOtherPaymentRequest;
+import com.bothash.admissionservice.dto.AdmissionOtherPaymentReturnRequest;
 import com.bothash.admissionservice.dto.AdmissionDocumentReturnRequest;
 import com.bothash.admissionservice.dto.AdmissionDocumentResubmissionRequest;
 import com.bothash.admissionservice.dto.StudentAdditionalQualificationDto;
@@ -79,6 +82,10 @@ public interface Admission2Service {
 	List<StudentAdditionalQualification> listAdditionalQualifications(Long admissionId);
 	List<StudentAdditionalQualification> replaceAdditionalQualifications(Long admissionId,
 			List<StudentAdditionalQualificationDto> items);
+	List<AdmissionOtherPaymentDto> listOtherPayments(Long admissionId);
+	AdmissionOtherPaymentDto addOtherPayment(Long admissionId, AdmissionOtherPaymentRequest request);
+	AdmissionOtherPaymentDto addOtherPaymentReturn(Long admissionId, AdmissionOtherPaymentReturnRequest request);
+	void deleteOtherPayment(Long admissionId, Long paymentId);
 
 	FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
 			LocalDate dueDate, String mode, String receivedBy, String status, Double yearlyFeesAmount, String txnRef,

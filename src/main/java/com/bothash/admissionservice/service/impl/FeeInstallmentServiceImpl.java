@@ -18,10 +18,19 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+
+import com.bothash.admissionservice.service.AdmissionAuditService;
 
 @Service
 @RequiredArgsConstructor
@@ -34,6 +43,7 @@ public class FeeInstallmentServiceImpl {
     private final FeeInvoiceRepository invoiceRepo;
     private final FileUploadRepository uploadRepo;
     private final FeeInstallmentPaymentRepository paymentRepo;
+    private final AdmissionAuditService admissionAuditService;
 
     @Transactional
     public FeeInstallment updateStatus(Long installmentId, String newStatus) {
@@ -135,8 +145,14 @@ public class FeeInstallmentServiceImpl {
         FeeInstallment inst = installmentRepo.findById(installmentId)
                 .orElseThrow(() -> new EntityNotFoundException("FeeInstallment not found: " + installmentId));
 
+        Admission2 admission = inst.getAdmission();
         Long admissionId = inst.getAdmission().getAdmissionId();
         Integer studyYear = inst.getStudyYear();
+        Integer installmentNo = inst.getInstallmentNo();
+        java.math.BigDecimal amountDue = inst.getAmountDue();
+        java.math.BigDecimal amountPaid = inst.getAmountPaid();
+        java.time.LocalDate dueDate = inst.getDueDate();
+        String status = inst.getStatus();
         
         // Optional safety: don't allow delete if paid
         if (inst.getAmountPaid() != null && inst.getAmountPaid().signum() > 0) {
@@ -170,6 +186,31 @@ public class FeeInstallmentServiceImpl {
         installmentRepo.delete(inst);
         
         resequenceInstallments(admissionId, studyYear);
+
+        Map<String, Object> details = new HashMap<>();
+        details.put("installmentId", installmentId);
+        details.put("admissionId", admissionId);
+        details.put("studyYear", studyYear);
+        details.put("installmentNo", installmentNo);
+        details.put("deletedAt", OffsetDateTime.now());
+
+        Map<String, Object> beforePayload = new HashMap<>();
+        beforePayload.put("studyYear", studyYear);
+        beforePayload.put("installmentNo", installmentNo);
+        beforePayload.put("amountDue", amountDue);
+        beforePayload.put("amountPaid", amountPaid);
+        beforePayload.put("dueDate", dueDate);
+        beforePayload.put("status", status);
+
+        Map<String, Object> deleteChange = new HashMap<>();
+        deleteChange.put("label", "Installment Deleted");
+        deleteChange.put("before", beforePayload);
+        deleteChange.put("after", null);
+
+        Map<String, Object> changedFields = new HashMap<>();
+        changedFields.put("installmentDeleted", deleteChange);
+
+        admissionAuditService.record(admission, "INSTALLMENT_DELETED", resolveAuditActor(), details, changedFields);
     }
 
     private void safeDeleteLocalFile(String filePath) {
@@ -217,5 +258,31 @@ public class FeeInstallmentServiceImpl {
             i++;
         }
         installmentRepo.saveAll(remaining);
+    }
+
+    private String resolveAuditActor() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.isAuthenticated()) {
+            Object principal = auth.getPrincipal();
+            if (principal instanceof Jwt jwt) {
+                String nameClaim = jwt.getClaimAsString("name");
+                if (StringUtils.hasText(nameClaim)) {
+                    return nameClaim;
+                }
+                String preferred = jwt.getClaimAsString("preferred_username");
+                if (StringUtils.hasText(preferred)) {
+                    return preferred;
+                }
+                String email = jwt.getClaimAsString("email");
+                if (StringUtils.hasText(email)) {
+                    return email;
+                }
+            }
+            String name = auth.getName();
+            if (StringUtils.hasText(name) && !"anonymousUser".equalsIgnoreCase(name)) {
+                return name;
+            }
+        }
+        return null;
     }
 }

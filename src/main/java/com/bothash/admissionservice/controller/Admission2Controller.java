@@ -97,6 +97,36 @@ public class Admission2Controller {
     return ResponseEntity.ok(toDto(saved));
   }
 
+  @GetMapping("/{id}/other-payments")
+  public ResponseEntity<List<AdmissionOtherPaymentDto>> listOtherPayments(@PathVariable Long id) {
+    return ResponseEntity.ok(admissionService.listOtherPayments(id));
+  }
+
+  @PostMapping("/{id}/other-payments")
+  public ResponseEntity<AdmissionOtherPaymentDto> addOtherPayment(
+      @PathVariable Long id,
+      @RequestBody AdmissionOtherPaymentRequest req
+  ) {
+    return ResponseEntity.ok(admissionService.addOtherPayment(id, req));
+  }
+
+  @PostMapping("/{id}/other-payments/returns")
+  public ResponseEntity<AdmissionOtherPaymentDto> addOtherPaymentReturn(
+      @PathVariable Long id,
+      @RequestBody AdmissionOtherPaymentReturnRequest req
+  ) {
+    return ResponseEntity.ok(admissionService.addOtherPaymentReturn(id, req));
+  }
+
+  @DeleteMapping("/{id}/other-payments/{paymentId}")
+  public ResponseEntity<Void> deleteOtherPayment(
+      @PathVariable Long id,
+      @PathVariable Long paymentId
+  ) {
+    admissionService.deleteOtherPayment(id, paymentId);
+    return ResponseEntity.noContent().build();
+  }
+
   @GetMapping("/{id}/additional-qualifications")
   public ResponseEntity<List<StudentAdditionalQualificationDto>> listAdditionalQualifications(@PathVariable Long id) {
     List<StudentAdditionalQualification> entries = admissionService.listAdditionalQualifications(id);

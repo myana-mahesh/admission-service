@@ -70,6 +70,15 @@ public class BulkAdmissionUploadController {
         return ResponseEntity.ok(bulkUploadService.listHistory());
     }
 
+    @GetMapping("/{uploadId}")
+    public ResponseEntity<BulkUploadResponse> status(
+            @PathVariable UUID uploadId,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        ensureAdminOrHo(jwt);
+        return ResponseEntity.ok(bulkUploadService.getUploadStatus(uploadId));
+    }
+
     @GetMapping("/{uploadId}/error-report")
     public ResponseEntity<Resource> errorReport(
             @PathVariable UUID uploadId,

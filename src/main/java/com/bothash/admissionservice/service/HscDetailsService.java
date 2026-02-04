@@ -34,6 +34,7 @@ public class HscDetailsService {
             // ✅ UPDATE CASE
             existing.setCollegeName(input.getCollegeName());
             existing.setSubjects(input.getSubjects());
+            existing.setBoard(input.getBoard());
             existing.setRegistrationNumber(input.getRegistrationNumber());
             existing.setPassingYear(input.getPassingYear());
             existing.setPhysicsMarks(input.getPhysicsMarks());
@@ -48,6 +49,7 @@ public class HscDetailsService {
         HscDetails newHsc = new HscDetails();
         newHsc.setCollegeName(input.getCollegeName());
         newHsc.setSubjects(input.getSubjects());
+        newHsc.setBoard(input.getBoard());
         newHsc.setRegistrationNumber(input.getRegistrationNumber());
         newHsc.setPassingYear(input.getPassingYear());
         newHsc.setPhysicsMarks(input.getPhysicsMarks());

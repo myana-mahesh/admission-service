@@ -138,6 +138,7 @@ public class StudentController {
           HscDetails prevHsc = existingStudent.getHscDetails();
           String prevHscCollege = prevHsc != null ? prevHsc.getCollegeName() : null;
           String prevHscSubjects = prevHsc != null ? prevHsc.getSubjects() : null;
+          String prevHscBoard = prevHsc != null ? prevHsc.getBoard() : null;
           String prevHscRegNo = prevHsc != null ? prevHsc.getRegistrationNumber() : null;
           Integer prevHscYear = prevHsc != null ? prevHsc.getPassingYear() : null;
           Integer prevHscPhysics = prevHsc != null ? prevHsc.getPhysicsMarks() : null;
@@ -312,6 +313,7 @@ public class StudentController {
               HscDetails newHsc = student.getHscDetails();
               addChange(changes, "hsc.collegeName", prevHscCollege, newHsc != null ? newHsc.getCollegeName() : null);
               addChange(changes, "hsc.subjects", prevHscSubjects, newHsc != null ? newHsc.getSubjects() : null);
+              addChange(changes, "hsc.board", prevHscBoard, newHsc != null ? newHsc.getBoard() : null);
               addChange(changes, "hsc.registrationNumber", prevHscRegNo, newHsc != null ? newHsc.getRegistrationNumber() : null);
               addChange(changes, "hsc.passingYear", prevHscYear, newHsc != null ? newHsc.getPassingYear() : null);
               addChange(changes, "hsc.physicsMarks", prevHscPhysics, newHsc != null ? newHsc.getPhysicsMarks() : null);

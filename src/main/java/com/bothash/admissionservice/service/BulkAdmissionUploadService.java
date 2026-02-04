@@ -2,6 +2,7 @@
 package com.bothash.admissionservice.service;
 
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
@@ -19,6 +20,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
@@ -96,6 +98,7 @@ public class BulkAdmissionUploadService {
     private static final String JOB_TYPE = "ADMISSIONS";
     private static final String STATUS_COMPLETED = "COMPLETED";
     private static final String STATUS_PROCESSING = "PROCESSING";
+    private static final String STATUS_FAILED = "FAILED";
 
     private static final int COL_ADMISSION_DATE = 0;
     private static final int COL_STUDENT_STATUS = 1;
@@ -430,6 +433,29 @@ public class BulkAdmissionUploadService {
                 .build();
         jobRepository.save(job);
 
+        final byte[] fileBytes;
+        try {
+            fileBytes = file.getBytes();
+        } catch (IOException e) {
+            job.setStatus(STATUS_FAILED);
+            job.setFailedRows(1);
+            jobRepository.save(job);
+            throw new IllegalStateException("Unable to read uploaded file", e);
+        }
+
+        CompletableFuture.runAsync(() -> processUploadJob(uploadId, fileBytes, uploadedBy, academicYearLabel));
+        return toResponse(job);
+    }
+
+    public BulkUploadResponse getUploadStatus(UUID uploadId) {
+        BulkUploadJob job = jobRepository.findById(uploadId)
+                .orElseThrow(() -> new IllegalArgumentException("Upload not found: " + uploadId));
+        return toResponse(job);
+    }
+
+    private void processUploadJob(UUID uploadId, byte[] fileBytes, String uploadedBy, String academicYearLabel) {
+        BulkUploadJob job = jobRepository.findById(uploadId)
+                .orElseThrow(() -> new IllegalArgumentException("Upload not found: " + uploadId));
         List<BulkErrorRow> errorRows = new ArrayList<>();
         int totalRows = 0;
         int successRows = 0;
@@ -438,7 +464,7 @@ public class BulkAdmissionUploadService {
         TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
         txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 
-        try (InputStream in = file.getInputStream(); Workbook workbook = WorkbookFactory.create(in)) {
+        try (InputStream in = new ByteArrayInputStream(fileBytes); Workbook workbook = WorkbookFactory.create(in)) {
             Sheet sheet = workbook.getSheet(SHEET_NAME);
             if (sheet == null && workbook.getNumberOfSheets() > 0) {
                 sheet = workbook.getSheetAt(0);
@@ -455,12 +481,27 @@ public class BulkAdmissionUploadService {
 
             int firstRow = Math.max(sheet.getFirstRowNum() + 1, 1);
             int lastRow = sheet.getLastRowNum();
+
+            // Count processable rows first so UI can show progress percentage.
             for (int rowIdx = firstRow; rowIdx <= lastRow; rowIdx++) {
                 Row row = sheet.getRow(rowIdx);
                 if (row == null || isHeaderRow(row, formatter) || isRowBlank(row, formatter)) {
                     continue;
                 }
                 totalRows++;
+            }
+            job.setTotalRows(totalRows);
+            job.setSuccessRows(0);
+            job.setFailedRows(0);
+            job.setStatus(STATUS_PROCESSING);
+            jobRepository.save(job);
+
+            int processedRows = 0;
+            for (int rowIdx = firstRow; rowIdx <= lastRow; rowIdx++) {
+                Row row = sheet.getRow(rowIdx);
+                if (row == null || isHeaderRow(row, formatter) || isRowBlank(row, formatter)) {
+                    continue;
+                }
                 int excelRowNumber = rowIdx + 1;
                 try {
                     txTemplate.execute(status -> {
@@ -473,6 +514,13 @@ public class BulkAdmissionUploadService {
                     failedRows++;
                     String reason = ex.getMessage() != null ? ex.getMessage() : "Unknown error";
                     errorRows.add(new BulkErrorRow(excelRowNumber, reason, readRowValues(row, formatter)));
+                }
+
+                processedRows++;
+                if (processedRows % 5 == 0 || processedRows == totalRows) {
+                    job.setSuccessRows(successRows);
+                    job.setFailedRows(failedRows);
+                    jobRepository.save(job);
                 }
             }
         } catch (Exception ex) {
@@ -492,15 +540,20 @@ public class BulkAdmissionUploadService {
         job.setStatus(STATUS_COMPLETED);
         job.setErrorReportPath(errorReportPath);
         jobRepository.save(job);
+    }
 
+    private BulkUploadResponse toResponse(BulkUploadJob job) {
+        if (job == null) {
+            return null;
+        }
         return BulkUploadResponse.builder()
-                .uploadId(uploadId)
+                .uploadId(job.getId())
                 .fileName(job.getFileName())
-                .totalRows(totalRows)
-                .successRows(successRows)
-                .failedRows(failedRows)
+                .totalRows(job.getTotalRows() != null ? job.getTotalRows() : 0)
+                .successRows(job.getSuccessRows() != null ? job.getSuccessRows() : 0)
+                .failedRows(job.getFailedRows() != null ? job.getFailedRows() : 0)
                 .status(job.getStatus())
-                .errorReportAvailable(errorReportPath != null)
+                .errorReportAvailable(StringUtils.hasText(job.getErrorReportPath()))
                 .build();
     }
 
@@ -743,6 +796,7 @@ public class BulkAdmissionUploadService {
         HscDetails hsc = new HscDetails();
         hsc.setCollegeName(collegeName);
         hsc.setPassingYear(year);
+        hsc.setBoard(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_BOARD], COL_HSC_BOARD));
         hsc.setRegistrationNumber(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_REG_NO],
                 COL_HSC_REG_NO));
         hsc.setSubjects(parsed != null && StringUtils.hasText(parsed.subjects())
