@@ -89,6 +89,8 @@ import com.bothash.admissionservice.repository.StudentRepository;
 import com.bothash.admissionservice.service.impl.InvoiceServiceImpl;
 import com.bothash.admissionservice.service.impl.PaymentModeService;
 
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 
 @Service
@@ -417,6 +419,7 @@ public class BulkAdmissionUploadService {
     private final StudentFeeCommentService studentFeeCommentService;
     private final Admission2Service admissionService;
     private final PlatformTransactionManager transactionManager;
+    private final EntityManager entityManager;
 
     public BulkUploadResponse processUpload(MultipartFile file, String uploadedBy, String academicYearLabel) {
         UUID uploadId = UUID.randomUUID();
@@ -476,10 +479,11 @@ public class BulkAdmissionUploadService {
             Map<String, OtherPaymentField> otherPaymentByLabel = loadOtherPaymentFields();
             Map<Long, List<com.bothash.admissionservice.entity.OtherPaymentFieldOption>> otherPaymentOptionsByField =
                     loadOtherPaymentOptions();
-            ColumnMap columnMap = buildColumnMap(sheet, formatter);
-            List<String> headerValues = readHeaderValues(sheet, formatter);
+            int headerRowIndex = findHeaderRowIndex(sheet, formatter);
+            ColumnMap columnMap = buildColumnMap(sheet, formatter, headerRowIndex);
+            List<String> headerValues = readHeaderValues(sheet, formatter, headerRowIndex);
 
-            int firstRow = Math.max(sheet.getFirstRowNum() + 1, 1);
+            int firstRow = Math.max(headerRowIndex + 1, 1);
             int lastRow = sheet.getLastRowNum();
 
             // Count processable rows first so UI can show progress percentage.
@@ -639,7 +643,7 @@ public class BulkAdmissionUploadService {
             throw new IllegalArgumentException("Lecture branch not found: " + lectureBranchRaw);
         }
 
-        String collegeRaw = cellValue(row, formatter, COL_COLLEGE);
+        String collegeRaw = cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_COLLEGE], COL_COLLEGE);
         College college = null;
         if (StringUtils.hasText(collegeRaw)) {
             college = resolveOrCreateCollege(collegeRaw);
@@ -652,9 +656,13 @@ public class BulkAdmissionUploadService {
         String absId = null;
 
         String registrationNumber = cellValue(row, formatter, COL_REG_NUMBER);
-        if (StringUtils.hasText(registrationNumber)
-                && studentRepository.findByRegistrationNumber(registrationNumber.trim()).isPresent()) {
-            throw new IllegalArgumentException("Registration number already exists: " + registrationNumber);
+        if (StringUtils.hasText(registrationNumber)) {
+            String trimmedReg = registrationNumber.trim();
+            Student studentByReg = studentRepository.findByRegistrationNumber(trimmedReg).orElse(null);
+            if (studentByReg != null && !studentByReg.getMobile().equals(studentMobile.trim())) {
+                throw new IllegalArgumentException("Registration number already exists with different mobile: "
+                        + registrationNumber);
+            }
         }
 
         Student student = upsertStudent(row, formatter, studentName, studentMobile, gender, dob, course, absId,
@@ -771,14 +779,19 @@ public class BulkAdmissionUploadService {
         String board = cellValue(row, formatter, COL_SSC_BOARD);
         Integer year = parseInteger(cellValue(row, formatter, COL_SSC_YEAR));
         Double percent = parseDouble(cellValue(row, formatter, COL_SSC_PERCENT));
-        if (!StringUtils.hasText(board) || year == null || percent == null) {
+        String regNo = cellValue(row, formatter, COL_SSC_REG_NO);
+        boolean hasSscData = StringUtils.hasText(board)
+                || year != null
+                || percent != null
+                || StringUtils.hasText(regNo);
+        if (!hasSscData) {
             return;
         }
         SscDetails ssc = new SscDetails();
         ssc.setBoard(board);
         ssc.setPassingYear(year);
         ssc.setPercentage(percent);
-        ssc.setRegistrationNumber(cellValue(row, formatter, COL_SSC_REG_NO));
+        ssc.setRegistrationNumber(regNo);
         sscDetailsService.saveOrUpdateByStudent(student.getStudentId(), ssc);
     }
 
@@ -787,30 +800,44 @@ public class BulkAdmissionUploadService {
                 COL_HSC_COLLEGE);
         Integer year = parseInteger(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_YEAR],
                 COL_HSC_YEAR));
-        if (!StringUtils.hasText(collegeName) || year == null) {
-            return;
-        }
         String subjectsRaw = cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_SUBJECTS],
                 COL_HSC_SUBJECTS);
         HscSubjectMarks parsed = parseHscSubjects(subjectsRaw);
+        String board = cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_BOARD], COL_HSC_BOARD);
+        String regNo = cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_REG_NO],
+                COL_HSC_REG_NO);
+        Double percent = parseDouble(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_PERCENT],
+                COL_HSC_PERCENT));
+        Double pcb = parseDouble(cellValueByHeader(row, formatter, headerValues,
+                TEMPLATE_HEADERS[COL_HSC_PCB_PERCENT], COL_HSC_PCB_PERCENT));
+        boolean hasMarks = parsed != null
+                && (parsed.physics() != null || parsed.chemistry() != null || parsed.biology() != null);
+        boolean hasHscData = StringUtils.hasText(collegeName)
+                || year != null
+                || StringUtils.hasText(subjectsRaw)
+                || StringUtils.hasText(board)
+                || StringUtils.hasText(regNo)
+                || percent != null
+                || pcb != null
+                || hasMarks;
+        if (!hasHscData) {
+            return;
+        }
+
         HscDetails hsc = new HscDetails();
         hsc.setCollegeName(collegeName);
         hsc.setPassingYear(year);
-        hsc.setBoard(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_BOARD], COL_HSC_BOARD));
-        hsc.setRegistrationNumber(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_REG_NO],
-                COL_HSC_REG_NO));
+        hsc.setBoard(board);
+        hsc.setRegistrationNumber(regNo);
         hsc.setSubjects(parsed != null && StringUtils.hasText(parsed.subjects())
                 ? parsed.subjects()
                 : subjectsRaw);
-        hsc.setPercentage(parseDouble(cellValueByHeader(row, formatter, headerValues, TEMPLATE_HEADERS[COL_HSC_PERCENT],
-                COL_HSC_PERCENT)));
+        hsc.setPercentage(percent);
         if (parsed != null) {
             hsc.setPhysicsMarks(parsed.physics());
             hsc.setChemistryMarks(parsed.chemistry());
             hsc.setBiologyMarks(parsed.biology());
         }
-        Double pcb = parseDouble(cellValueByHeader(row, formatter, headerValues,
-                TEMPLATE_HEADERS[COL_HSC_PCB_PERCENT], COL_HSC_PCB_PERCENT));
         if (pcb == null && parsed != null && parsed.physics() != null && parsed.chemistry() != null
                 && parsed.biology() != null) {
             pcb = (parsed.physics() + parsed.chemistry() + parsed.biology()) / 3.0;
@@ -1006,8 +1033,8 @@ public class BulkAdmissionUploadService {
         return cleaned;
     }
 
-    private List<String> readHeaderValues(Sheet sheet, DataFormatter formatter) {
-        Row header = sheet.getRow(sheet.getFirstRowNum());
+    private List<String> readHeaderValues(Sheet sheet, DataFormatter formatter, int headerRowIndex) {
+        Row header = sheet.getRow(headerRowIndex);
         int lastCellNum = header != null ? header.getLastCellNum() : 0;
         int size = Math.max(TEMPLATE_HEADERS.length, Math.max(0, lastCellNum));
         List<String> headers = new ArrayList<>(size);
@@ -1019,6 +1046,21 @@ public class BulkAdmissionUploadService {
             headers.add(StringUtils.hasText(value) ? value.trim() : null);
         }
         return headers;
+    }
+
+    private int findHeaderRowIndex(Sheet sheet, DataFormatter formatter) {
+        if (sheet == null) {
+            return 0;
+        }
+        int first = sheet.getFirstRowNum();
+        int last = Math.min(sheet.getLastRowNum(), first + 20);
+        for (int i = first; i <= last; i++) {
+            Row row = sheet.getRow(i);
+            if (isHeaderRow(row, formatter)) {
+                return i;
+            }
+        }
+        return first;
     }
 
     private String cellValueByHeader(Row row, DataFormatter formatter, List<String> headerValues, String headerLabel,
@@ -1825,8 +1867,8 @@ public class BulkAdmissionUploadService {
         return trimmed;
     }
 
-    private ColumnMap buildColumnMap(Sheet sheet, DataFormatter formatter) {
-        Row header = sheet.getRow(sheet.getFirstRowNum());
+    private ColumnMap buildColumnMap(Sheet sheet, DataFormatter formatter, int headerRowIndex) {
+        Row header = sheet.getRow(headerRowIndex);
         if (header == null) {
             return ColumnMap.defaults();
         }
@@ -2028,5 +2070,47 @@ public class BulkAdmissionUploadService {
     }
 
     private record BulkErrorRow(int rowNumber, String reason, List<String> values) {
+    }
+
+    @Transactional
+    public void resetTestData() {
+        List<String> statements = List.of(
+                "set foreign_key_checks=0",
+                "truncate student",
+                "truncate admission2",
+                "truncate fee_installment",
+                "truncate fee_installment_payment",
+                "truncate fee_invoice",
+                "truncate file_upload",
+                "truncate guardian",
+                "truncate student_document_verification",
+                "truncate student_address",
+                "truncate bulk_upload_job",
+                "truncate student_hsc_details",
+                "truncate student_ssc_details",
+                "truncate admission_audit",
+                "truncate address",
+                "truncate admission_cancellation",
+                "truncate admission_signoff",
+                "truncate exam_assignment",
+                "truncate exam_student_mark",
+                "truncate student_additional_qualification",
+                "truncate student_fee_comment",
+                "truncate student_fee_schedule",
+                "truncate student_other_payment_value",
+                "truncate students_pers_mapping",
+                "truncate payment_mode",
+                "update college_course set allocated_seats = 0, on_hold_seats = 0",
+                "set foreign_key_checks=1"
+        );
+
+        try {
+            for (String sql : statements) {
+                entityManager.createNativeQuery(sql).executeUpdate();
+            }
+        } catch (Exception ex) {
+            entityManager.createNativeQuery("set foreign_key_checks=1").executeUpdate();
+            throw ex;
+        }
     }
 }

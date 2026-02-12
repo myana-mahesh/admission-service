@@ -13,13 +13,13 @@ public class SscDetails {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column
     private Double percentage; // 0–100
 
-    @Column(length = 100, nullable = false)
+    @Column(length = 100)
     private String board;
 
-    @Column(name = "passing_year", nullable = false)
+    @Column(name = "passing_year")
     private Integer passingYear;
 
     @Column(name = "registration_number", length = 50)

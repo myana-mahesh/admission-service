@@ -28,7 +28,7 @@ public class HscDetails {
     @Column
     private Double percentage; // 0-100
 
-    @Column(length = 150, nullable = false)
+    @Column(length = 150)
     private String collegeName;
 
     @Column(length = 150)
@@ -40,7 +40,7 @@ public class HscDetails {
     @Column(length = 50)
     private String registrationNumber;
 
-    @Column(nullable = false)
+    @Column
     private Integer passingYear;
 
 /*    @OneToOne

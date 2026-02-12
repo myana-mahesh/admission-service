@@ -8,6 +8,7 @@ import com.bothash.admissionservice.repository.SscDetailsRepository;
 import com.bothash.admissionservice.repository.StudentRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.Optional;
 
@@ -39,10 +40,18 @@ public class SscDetailsService {
 
         if (existing != null) {
             // ✅ UPDATE CASE
-            existing.setPercentage(input.getPercentage());
-            existing.setBoard(input.getBoard());
-            existing.setPassingYear(input.getPassingYear());
-            existing.setRegistrationNumber(input.getRegistrationNumber());
+            if (input.getPercentage() != null) {
+                existing.setPercentage(input.getPercentage());
+            }
+            if (StringUtils.hasText(input.getBoard())) {
+                existing.setBoard(input.getBoard());
+            }
+            if (input.getPassingYear() != null) {
+                existing.setPassingYear(input.getPassingYear());
+            }
+            if (StringUtils.hasText(input.getRegistrationNumber())) {
+                existing.setRegistrationNumber(input.getRegistrationNumber());
+            }
 
             return repository.save(existing);
         }

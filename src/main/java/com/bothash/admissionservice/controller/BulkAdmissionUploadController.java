@@ -79,6 +79,13 @@ public class BulkAdmissionUploadController {
         return ResponseEntity.ok(bulkUploadService.getUploadStatus(uploadId));
     }
 
+    @PostMapping("/reset-test-data")
+    public ResponseEntity<Map<String, String>> resetTestData(@AuthenticationPrincipal Jwt jwt) {
+        ensureSuperAdmin(jwt);
+        bulkUploadService.resetTestData();
+        return ResponseEntity.ok(Map.of("status", "ok"));
+    }
+
     @GetMapping("/{uploadId}/error-report")
     public ResponseEntity<Resource> errorReport(
             @PathVariable UUID uploadId,
@@ -107,6 +114,16 @@ public class BulkAdmissionUploadController {
             return;
         }
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "HO or ADMIN role required");
+    }
+
+    private void ensureSuperAdmin(Jwt jwt) {
+        if (jwt == null) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Authentication required");
+        }
+        if (hasRole(jwt, "SUPER_ADMIN")) {
+            return;
+        }
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "SUPER_ADMIN role required");
     }
 
     private boolean hasRole(Jwt jwt, String role) {

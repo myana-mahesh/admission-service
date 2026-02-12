@@ -8,6 +8,7 @@ import com.bothash.admissionservice.repository.StudentRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.Optional;
 
@@ -32,16 +33,36 @@ public class HscDetailsService {
 
         if (existing != null) {
             // ✅ UPDATE CASE
-            existing.setCollegeName(input.getCollegeName());
-            existing.setSubjects(input.getSubjects());
-            existing.setBoard(input.getBoard());
-            existing.setRegistrationNumber(input.getRegistrationNumber());
-            existing.setPassingYear(input.getPassingYear());
-            existing.setPhysicsMarks(input.getPhysicsMarks());
-            existing.setChemistryMarks(input.getChemistryMarks());
-            existing.setBiologyMarks(input.getBiologyMarks());
-            existing.setPcbPercentage(input.getPcbPercentage());
-            existing.setPercentage(input.getPercentage());
+            if (StringUtils.hasText(input.getCollegeName())) {
+                existing.setCollegeName(input.getCollegeName());
+            }
+            if (StringUtils.hasText(input.getSubjects())) {
+                existing.setSubjects(input.getSubjects());
+            }
+            if (StringUtils.hasText(input.getBoard())) {
+                existing.setBoard(input.getBoard());
+            }
+            if (StringUtils.hasText(input.getRegistrationNumber())) {
+                existing.setRegistrationNumber(input.getRegistrationNumber());
+            }
+            if (input.getPassingYear() != null) {
+                existing.setPassingYear(input.getPassingYear());
+            }
+            if (input.getPhysicsMarks() != null) {
+                existing.setPhysicsMarks(input.getPhysicsMarks());
+            }
+            if (input.getChemistryMarks() != null) {
+                existing.setChemistryMarks(input.getChemistryMarks());
+            }
+            if (input.getBiologyMarks() != null) {
+                existing.setBiologyMarks(input.getBiologyMarks());
+            }
+            if (input.getPcbPercentage() != null) {
+                existing.setPcbPercentage(input.getPcbPercentage());
+            }
+            if (input.getPercentage() != null) {
+                existing.setPercentage(input.getPercentage());
+            }
 
             return hscRepository.save(existing);
         }

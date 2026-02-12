@@ -210,15 +210,17 @@ public class FeeLedgerService {
         Join<Admission2, Student> student = admission.join("student", JoinType.LEFT);
         Join<Admission2, Course> course = admission.join("course", JoinType.LEFT);
         Join<Admission2, AcademicYear> year = admission.join("year", JoinType.LEFT);
-        Join<Admission2, BranchMaster> branch = admission.join("lectureBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> lectureBranch = admission.join("lectureBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> admissionBranch = admission.join("admissionBranch", JoinType.LEFT);
         Join<FeeInstallment, PaymentModeMaster> paymentMode = root.join("paymentMode", JoinType.LEFT);
 
         List<Predicate> predicates = buildPredicates(
-                cq, cb, root, admission, student, course, year, branch, paymentMode,
+                cq, cb, root, admission, student, course, year, lectureBranch, admissionBranch, paymentMode,
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
+                false
         );
 
         // Apply payment-related filters using FeeInstallmentPayment table
@@ -314,15 +316,17 @@ public class FeeLedgerService {
         Join<Admission2, Student> countStudent = countAdmission.join("student", JoinType.LEFT);
         Join<Admission2, Course> countCourse = countAdmission.join("course", JoinType.LEFT);
         Join<Admission2, AcademicYear> countYear = countAdmission.join("year", JoinType.LEFT);
-        Join<Admission2, BranchMaster> countBranch = countAdmission.join("lectureBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> countLectureBranch = countAdmission.join("lectureBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> countAdmissionBranch = countAdmission.join("admissionBranch", JoinType.LEFT);
         Join<FeeInstallment, PaymentModeMaster> countPaymentMode = countRoot.join("paymentMode", JoinType.LEFT);
 
         List<Predicate> countPredicates = buildPredicates(
-                countCq, cb, countRoot, countAdmission, countStudent, countCourse, countYear, countBranch, countPaymentMode,
+                countCq, cb, countRoot, countAdmission, countStudent, countCourse, countYear, countLectureBranch, countAdmissionBranch, countPaymentMode,
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
+                false
         );
         countCq.select(cb.countDistinct(countAdmission.get("admissionId")));
         countCq.where(countPredicates.toArray(new Predicate[0]));
@@ -365,6 +369,55 @@ public class FeeLedgerService {
             BigDecimal pendingMax,
             Boolean branchApprovedOnly
     ) {
+        Object[] admissionOnly = runSummaryQuery(
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
+                startDate, endDate, dateType, statusList, dueStatus,
+                paymentModes, verification, proofAttached, txnPresent,
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
+                true
+        );
+        Object[] combined = runSummaryQuery(
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
+                startDate, endDate, dateType, statusList, dueStatus,
+                paymentModes, verification, proofAttached, txnPresent,
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
+                false
+        );
+
+        return FeeLedgerSummaryDto.builder()
+                .totalFeeAmount(asBigDecimal(admissionOnly[0]))
+                .totalCollected(asBigDecimal(admissionOnly[1]))
+                .totalPending(asBigDecimal(admissionOnly[2]))
+                .overdueAmount(asBigDecimal(admissionOnly[3]))
+                .dueNext7DaysAmount(asBigDecimal(combined[4]))
+                .underVerificationCount(asLong(combined[5]))
+                .underVerificationStudentCount(asLong(combined[6]))
+                .build();
+    }
+
+    private Object[] runSummaryQuery(
+            String q,
+            List<Long> branchIds,
+            List<Long> courseIds,
+            String batch,
+            List<String> batchCodes,
+            Long academicYearId,
+            LocalDate startDate,
+            LocalDate endDate,
+            String dateType,
+            List<String> statusList,
+            String dueStatus,
+            List<String> paymentModes,
+            String verification,
+            String proofAttached,
+            String txnPresent,
+            String paidAmountOp,
+            BigDecimal paidAmount,
+            BigDecimal pendingMin,
+            BigDecimal pendingMax,
+            Boolean branchApprovedOnly,
+            boolean admissionBranchOnly
+    ) {
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
         CriteriaQuery<Object[]> cq = cb.createQuery(Object[].class);
         Root<FeeInstallment> root = cq.from(FeeInstallment.class);
@@ -373,15 +426,17 @@ public class FeeLedgerService {
         Join<Admission2, Student> student = admission.join("student", JoinType.LEFT);
         Join<Admission2, Course> course = admission.join("course", JoinType.LEFT);
         Join<Admission2, AcademicYear> year = admission.join("year", JoinType.LEFT);
-        Join<Admission2, BranchMaster> branch = admission.join("lectureBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> lectureBranch = admission.join("lectureBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> admissionBranch = admission.join("admissionBranch", JoinType.LEFT);
         Join<FeeInstallment, PaymentModeMaster> paymentMode = root.join("paymentMode", JoinType.LEFT);
 
         List<Predicate> predicates = buildPredicates(
-                cq, cb, root, admission, student, course, year, branch, paymentMode,
+                cq, cb, root, admission, student, course, year, lectureBranch, admissionBranch, paymentMode,
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
+                admissionBranchOnly
         );
 
         Expression<BigDecimal> due = cb.coalesce(root.get("amountDue").as(BigDecimal.class), BigDecimal.ZERO);
@@ -428,17 +483,7 @@ public class FeeLedgerService {
         );
         cq.where(predicates.toArray(new Predicate[0]));
 
-        Object[] row = entityManager.createQuery(cq).getSingleResult();
-
-        return FeeLedgerSummaryDto.builder()
-                .totalFeeAmount(asBigDecimal(row[0]))
-                .totalCollected(asBigDecimal(row[1]))
-                .totalPending(asBigDecimal(row[2]))
-                .overdueAmount(asBigDecimal(row[3]))
-                .dueNext7DaysAmount(asBigDecimal(row[4]))
-                .underVerificationCount(asLong(row[5]))
-                .underVerificationStudentCount(asLong(row[6]))
-                .build();
+        return entityManager.createQuery(cq).getSingleResult();
     }
 
     private List<Predicate> buildPredicates(
@@ -449,7 +494,8 @@ public class FeeLedgerService {
             Join<Admission2, Student> student,
             Join<Admission2, Course> course,
             Join<Admission2, AcademicYear> year,
-            Join<Admission2, BranchMaster> branch,
+            Join<Admission2, BranchMaster> lectureBranch,
+            Join<Admission2, BranchMaster> admissionBranch,
             Join<FeeInstallment, PaymentModeMaster> paymentMode,
             String q,
             List<Long> branchIds,
@@ -470,7 +516,8 @@ public class FeeLedgerService {
             BigDecimal paidAmount,
             BigDecimal pendingMin,
             BigDecimal pendingMax,
-            Boolean branchApprovedOnly
+            Boolean branchApprovedOnly,
+            boolean admissionBranchOnly
     ) {
         List<Predicate> predicates = new ArrayList<>();
 
@@ -484,7 +531,14 @@ public class FeeLedgerService {
         }
 
         if (branchIds != null && !branchIds.isEmpty()) {
-            predicates.add(branch.get("id").in(branchIds));
+            if (admissionBranchOnly) {
+                predicates.add(admissionBranch.get("id").in(branchIds));
+            } else {
+                predicates.add(cb.or(
+                        lectureBranch.get("id").in(branchIds),
+                        admissionBranch.get("id").in(branchIds)
+                ));
+            }
         }
         if (courseIds != null && !courseIds.isEmpty()) {
             predicates.add(course.get("courseId").in(courseIds));
