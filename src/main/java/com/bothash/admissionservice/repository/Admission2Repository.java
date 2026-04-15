@@ -8,6 +8,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -29,7 +30,7 @@ public interface Admission2Repository extends JpaRepository<Admission2, Long> {
 
 	Admission2 findByStudentStudentIdAndYearYearIdAndCourseCourseId(Long studentId, Long yearId, Long courseId);
 
-	Admission2 findFirstByStudent_MobileOrderByCreatedAtDesc(String mobile);
+	Admission2 findFirstByStudent_MobileAndCourse_CourseIdOrderByCreatedAtDesc(String mobile, Long courseId);
 	Admission2 findFirstByStudentStudentIdOrderByUpdatedAtDesc(Long studentId);
 
 	List<Admission2> findByCourseCourseIdAndLectureBranchIdInAndBatchIn(Long courseId, List<Long> lectureBranchIds,
@@ -124,5 +125,9 @@ public interface Admission2Repository extends JpaRepository<Admission2, Long> {
 	List<Long> findStudentIdsByFilters(@Param("collegeId") Long collegeId,
 	                                   @Param("courseId") Long courseId,
 	                                   @Param("yearId") Long yearId);
+
+	@Modifying(clearAutomatically = true, flushAutomatically = true)
+	@Query("update Admission2 a set a.college = null where a.college.collegeId = :collegeId")
+	int clearCollegeReferences(@Param("collegeId") Long collegeId);
 
 }

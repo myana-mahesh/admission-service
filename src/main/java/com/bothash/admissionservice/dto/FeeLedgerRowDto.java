@@ -14,6 +14,8 @@ public class FeeLedgerRowDto {
     private String studentName;
     private String absId;
     private String mobile;
+    private String fatherMobile;
+    private String motherMobile;
     private Long branchId;
     private String branchName;
     private Long courseId;
@@ -26,4 +28,6 @@ public class FeeLedgerRowDto {
     private LocalDate dueNextDate;
     private BigDecimal dueNextAmount;
     private String statusSummary;
+    private Boolean hasSchedule;
+    private Long scheduleCount;
 }

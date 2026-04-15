@@ -4,6 +4,8 @@ import com.bothash.admissionservice.entity.*;
 import lombok.RequiredArgsConstructor;
 
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -64,6 +66,7 @@ private final FileUploadRepository uploadRepo;
 	private final InvoiceServiceImpl invoiceService;
 	private final FeeInvoiceRepository invoiceRepo;
 	private final AdmissionAuditService admissionAuditService;
+	private final R2InvoiceStorageService r2InvoiceStorageService;
 	
 	@Autowired
 	private YearlyFeesRepository yearlyFeesRepository;
@@ -111,8 +114,8 @@ private final FileUploadRepository uploadRepo;
 		String prevBatch = null;
 		String prevRegistrationNumber = null;
 		String prevReferenceName = null;
-		Long prevAdmissionBranchId = null;
-		Long prevLectureBranchId = null;
+		String prevAdmissionBranchName = null;
+		String prevLectureBranchName = null;
 		CollegeVerificationStatus prevCollegeVerificationStatus = null;
 		if (isNew) {
 			a = new Admission2();
@@ -136,8 +139,8 @@ private final FileUploadRepository uploadRepo;
 			prevBatch = a.getBatch();
 			prevRegistrationNumber = a.getRegistrationNumber();
 			prevReferenceName = a.getReferenceName();
-			prevAdmissionBranchId = a.getAdmissionBranch() != null ? a.getAdmissionBranch().getId() : null;
-			prevLectureBranchId = a.getLectureBranch() != null ? a.getLectureBranch().getId() : null;
+			prevAdmissionBranchName = branchName(a.getAdmissionBranch());
+			prevLectureBranchName = branchName(a.getLectureBranch());
 			prevCollegeVerificationStatus = a.getCollegeVerificationStatus();
 		}
 		a.setStudent(student);
@@ -194,10 +197,8 @@ private final FileUploadRepository uploadRepo;
 			addChange(changes, "batch", prevBatch, a.getBatch());
 			addChange(changes, "registrationNumber", prevRegistrationNumber, a.getRegistrationNumber());
 			addChange(changes, "referenceName", prevReferenceName, a.getReferenceName());
-			addChange(changes, "admissionBranchId", prevAdmissionBranchId,
-					a.getAdmissionBranch() != null ? a.getAdmissionBranch().getId() : null);
-			addChange(changes, "lectureBranchId", prevLectureBranchId,
-					a.getLectureBranch() != null ? a.getLectureBranch().getId() : null);
+			addChange(changes, "admissionBranch", prevAdmissionBranchName, branchName(a.getAdmissionBranch()));
+			addChange(changes, "lectureBranch", prevLectureBranchName, branchName(a.getLectureBranch()));
 			addChange(changes, "collegeVerificationStatus", prevCollegeVerificationStatus, a.getCollegeVerificationStatus());
 			Map<String, Object> details = Map.of(
 					"admissionId", a.getAdmissionId(),
@@ -312,6 +313,7 @@ private final FileUploadRepository uploadRepo;
 				.returnedOn(request.getReturnedOn() != null ? request.getReturnedOn() : LocalDate.now())
 				.reason(StringUtils.hasText(request.getReason()) ? request.getReason().trim() : null)
 				.returnedBy(StringUtils.hasText(request.getReturnedBy()) ? request.getReturnedBy().trim() : null)
+				.documentHandler(StringUtils.hasText(request.getDocumentHandler()) ? request.getDocumentHandler().trim() : null)
 				.actionType(resolveReturnAction(request.getActionType()))
 				.build();
 		entry = admissionDocumentReturnRepository.save(entry);
@@ -320,6 +322,7 @@ private final FileUploadRepository uploadRepo;
 		addChange(changes, "documentReturn.returnedOn", null, entry.getReturnedOn());
 		addChange(changes, "documentReturn.reason", null, entry.getReason());
 		addChange(changes, "documentReturn.returnedBy", null, entry.getReturnedBy());
+		addChange(changes, "documentReturn.documentHandler", null, entry.getDocumentHandler());
 		addChange(changes, "documentReturn.actionType", null, entry.getActionType());
 		Map<String, Object> details = Map.of(
 				"returnId", entry.getReturnId(),
@@ -337,16 +340,13 @@ private final FileUploadRepository uploadRepo;
 		String prevResubmittedTo = entry.getResubmittedTo();
 		String prevResubmissionReason = entry.getResubmissionReason();
 		String prevResubmittedBy = entry.getResubmittedBy();
-		String prevActionType = entry.getActionType();
 		if (request == null) {
 			throw new IllegalArgumentException("Resubmission request is required.");
 		}
 		entry.setResubmittedOn(LocalDate.now());
-		String resubmittedTo = StringUtils.hasText(request.getResubmittedTo())
-				? request.getResubmittedTo().trim()
-				: null;
-		if (!StringUtils.hasText(resubmittedTo) && StringUtils.hasText(request.getResubmittedBy())) {
-			resubmittedTo = request.getResubmittedBy().trim();
+		String resubmittedTo = normalizeReceiveBackParty(request.getResubmittedTo());
+		if (!StringUtils.hasText(resubmittedTo)) {
+			resubmittedTo = resolveReturnTargetLabel(entry.getActionType());
 		}
 		entry.setResubmittedTo(resubmittedTo);
 		entry.setResubmissionReason(StringUtils.hasText(request.getResubmissionReason())
@@ -355,19 +355,18 @@ private final FileUploadRepository uploadRepo;
 		entry.setResubmittedBy(StringUtils.hasText(request.getResubmittedBy())
 				? request.getResubmittedBy().trim()
 				: null);
-		entry.setActionType("RESUBMITTED");
 		entry = admissionDocumentReturnRepository.save(entry);
 		Map<String, Object> changes = new LinkedHashMap<>();
 		addChange(changes, "documentReturn.resubmittedOn", prevResubmittedOn, entry.getResubmittedOn());
 		addChange(changes, "documentReturn.resubmittedTo", prevResubmittedTo, entry.getResubmittedTo());
 		addChange(changes, "documentReturn.resubmissionReason", prevResubmissionReason, entry.getResubmissionReason());
 		addChange(changes, "documentReturn.resubmittedBy", prevResubmittedBy, entry.getResubmittedBy());
-		addChange(changes, "documentReturn.actionType", prevActionType, entry.getActionType());
 		Admission2 admission = entry.getAdmission();
 		Map<String, Object> details = new LinkedHashMap<>();
 		details.put("returnId", entry.getReturnId());
 		details.put("docTypeCode", entry.getDocType() != null ? entry.getDocType().getCode() : null);
-		audit(admission, "DOCUMENT_RESUBMITTED", entry.getResubmittedBy(), details, changes);
+		details.put("receivedBackFrom", entry.getResubmittedTo());
+		audit(admission, "DOCUMENT_RECEIVED_BACK", entry.getResubmittedBy(), details, changes);
 		return entry;
 	}
 
@@ -536,13 +535,32 @@ private final FileUploadRepository uploadRepo;
 
 	private String resolveReturnAction(String raw) {
 		if (!StringUtils.hasText(raw)) {
-			return "RETURNED";
+			return "RETURNED_TO_STUDENT";
 		}
 		String normalized = raw.trim().toUpperCase(Locale.ENGLISH);
-		if ("RESUBMITTED".equals(normalized)) {
-			return "RESUBMITTED";
+		return switch (normalized) {
+			case "RETURNED_TO_BRANCH" -> "RETURNED_TO_BRANCH";
+			case "RETURNED_TO_STUDENT", "RETURNED", "RESUBMITTED" -> "RETURNED_TO_STUDENT";
+			default -> "RETURNED_TO_STUDENT";
+		};
+	}
+
+	private String resolveReturnTargetLabel(String actionType) {
+		return "RETURNED_TO_BRANCH".equals(resolveReturnAction(actionType)) ? "Branch" : "Student";
+	}
+
+	private String normalizeReceiveBackParty(String raw) {
+		if (!StringUtils.hasText(raw)) {
+			return null;
 		}
-		return "RETURNED";
+		String normalized = raw.trim().toUpperCase(Locale.ENGLISH);
+		if ("STUDENT".equals(normalized)) {
+			return "Student";
+		}
+		if ("BRANCH".equals(normalized)) {
+			return "Branch";
+		}
+		return raw.trim();
 	}
 
 	@Override
@@ -655,6 +673,7 @@ private final FileUploadRepository uploadRepo;
 		}
 
 		payment = admissionOtherPaymentRepository.save(payment);
+		payment = admissionOtherPaymentRepository.save(invoiceService.generateInvoiceForOtherPayment(admission, payment));
 		Map<String, Object> changes = new LinkedHashMap<>();
 		addChange(changes, "otherPayment.amount", null, payment.getAmount());
 		addChange(changes, "otherPayment.paidOn", null, payment.getPaidOn());
@@ -665,6 +684,7 @@ private final FileUploadRepository uploadRepo;
 		addChange(changes, "otherPayment.remarks", null, payment.getRemarks());
 		addChange(changes, "otherPayment.receivedBy", null, payment.getReceivedBy());
 		addChange(changes, "otherPayment.receiptName", null, payment.getReceiptName());
+		addChange(changes, "otherPayment.invoiceNumber", null, payment.getInvoiceNumber());
 		audit(admission, "OTHER_PAYMENT_ADDED", request.getReceivedBy(),
 				Map.of("paymentId", payment.getPaymentId()), changes);
 		return toOtherPaymentDto(payment);
@@ -756,6 +776,7 @@ private final FileUploadRepository uploadRepo;
 			reference.setReturnedAmount(adjusted);
 			admissionOtherPaymentRepository.save(reference);
 		}
+		safeDeleteLocalFile(payment.getInvoiceFilePath());
 		admissionOtherPaymentRepository.delete(payment);
 		Map<String, Object> changes = new LinkedHashMap<>();
 		addChange(changes, "otherPayment.deletedPaymentId", null, paymentId);
@@ -982,6 +1003,7 @@ private final FileUploadRepository uploadRepo;
 
 		BigDecimal remaining = request.getAmount();
 		List<FeeInstallmentPayment> payments = new ArrayList<>();
+		String paymentGroupId = java.util.UUID.randomUUID().toString();
 		if (remaining.compareTo(BigDecimal.ZERO) > 0) {
 			for (FeeInstallment installment : installments) {
 				if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
@@ -1012,8 +1034,10 @@ private final FileUploadRepository uploadRepo;
 				FeeInstallmentPayment payment = FeeInstallmentPayment.builder()
 						.installment(installment)
 						.amount(applied)
+						.paymentGroupId(paymentGroupId)
 						.paymentMode(paymentMode)
 						.txnRef(request.getTxnRef())
+						.remarks(request.getRemarks())
 						.receivedBy(request.getReceivedBy())
 						.status(paymentStatus)
 						.isVerified(verified)
@@ -1026,7 +1050,7 @@ private final FileUploadRepository uploadRepo;
 
 				if (payment.getAmount() != null
 						&& payment.getAmount().compareTo(BigDecimal.ZERO) > 0
-						&& !invoiceRepo.existsByPayment_PaymentId(payment.getPaymentId())) {
+						&& !hasAllocationInvoiceForPayment(payment.getPaymentId())) {
 					invoiceService.generateInvoiceForPayment(admission, installment, payment);
 				}
 
@@ -1076,13 +1100,16 @@ private final FileUploadRepository uploadRepo;
 			details.put("amount", request.getAmount());
 			details.put("mode", request.getMode());
 			details.put("txnRef", request.getTxnRef());
+			details.put("remarks", request.getRemarks());
 			details.put("payments", paymentDetails);
 			audit(admission, "PAYMENT_APPLIED", request.getReceivedBy(), details, installmentChanges);
 			return payments;
 		}
 
 		BigDecimal reversalRemaining = remaining.abs();
-		for (FeeInstallment installment : installments) {
+		List<FeeInstallment> reversalOrder = new ArrayList<>(installments);
+		java.util.Collections.reverse(reversalOrder);
+		for (FeeInstallment installment : reversalOrder) {
 			if (reversalRemaining.compareTo(BigDecimal.ZERO) <= 0) {
 				break;
 			}
@@ -1112,8 +1139,10 @@ private final FileUploadRepository uploadRepo;
 			FeeInstallmentPayment payment = FeeInstallmentPayment.builder()
 					.installment(installment)
 					.amount(applied.negate())
+					.paymentGroupId(paymentGroupId)
 					.paymentMode(paymentMode)
 					.txnRef(request.getTxnRef())
+					.remarks(request.getRemarks())
 					.receivedBy(request.getReceivedBy())
 					.status(paymentStatus)
 					.isVerified(verified)
@@ -1170,6 +1199,7 @@ private final FileUploadRepository uploadRepo;
 		details.put("amount", request.getAmount());
 		details.put("mode", request.getMode());
 		details.put("txnRef", request.getTxnRef());
+		details.put("remarks", request.getRemarks());
 		details.put("payments", paymentDetails);
 		audit(admission, "PAYMENT_APPLIED", request.getReceivedBy(), details, installmentChanges);
 		return payments;
@@ -1221,6 +1251,8 @@ private final FileUploadRepository uploadRepo;
 				.referencePaymentId(payment.getReferencePayment() != null ? payment.getReferencePayment().getPaymentId() : null)
 				.receiptName(payment.getReceiptName())
 				.receiptUrl(payment.getReceiptStorageUrl())
+				.invoiceNumber(payment.getInvoiceNumber())
+				.invoiceUrl(payment.getInvoiceDownloadUrl())
 				.build();
 	}
 
@@ -1519,6 +1551,41 @@ private final FileUploadRepository uploadRepo;
 			return null;
 		}
 		return value.trim();
+	}
+
+	private String branchName(BranchMaster branch) {
+		if (branch == null) {
+			return null;
+		}
+		if (StringUtils.hasText(branch.getName())) {
+			return branch.getName().trim();
+		}
+		if (StringUtils.hasText(branch.getCode())) {
+			return branch.getCode().trim();
+		}
+		return branch.getId() != null ? String.valueOf(branch.getId()) : null;
+	}
+
+	private void safeDeleteLocalFile(String filePath) {
+		if (!StringUtils.hasText(filePath)) {
+			return;
+		}
+		try {
+			if (r2InvoiceStorageService.isEnabled()) {
+				String r2Key = r2InvoiceStorageService.extractKey(filePath);
+				if (StringUtils.hasText(r2Key)) {
+					r2InvoiceStorageService.delete(r2Key);
+					return;
+				}
+			}
+			Files.deleteIfExists(Path.of(filePath));
+		} catch (Exception ignored) {
+		}
+	}
+
+	private boolean hasAllocationInvoiceForPayment(Long paymentId) {
+		return invoiceRepo.findByPayment_PaymentId(paymentId).stream()
+				.anyMatch(invoice -> !InvoiceServiceImpl.isPaymentGroupInvoiceNumber(invoice.getInvoiceNumber()));
 	}
 
 	private String buildLabel(String field) {

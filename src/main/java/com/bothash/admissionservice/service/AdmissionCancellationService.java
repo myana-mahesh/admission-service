@@ -106,4 +106,16 @@ public class AdmissionCancellationService {
         return dto;
     }
 
+    @Transactional
+    public Admission2 reopenCancellation(Long admissionId) {
+        Admission2 admission = admission2Service.getAdmission(admissionId);
+        AdmissionStatus currentStatus = admission.getStatus();
+        if (currentStatus != AdmissionStatus.CANCELLED
+                && currentStatus != AdmissionStatus.UNDER_CANCELLATION) {
+            throw new IllegalStateException("Only cancelled admissions can be reopened.");
+        }
+        admission2Service.updateStatus(admissionId, AdmissionStatus.PENDING);
+        return admission2Service.getAdmission(admissionId);
+    }
+
 }

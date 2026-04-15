@@ -38,36 +38,37 @@ public class SscDetailsService {
             return existing;
         }
 
+        boolean hasAnyValue = input.getPercentage() != null
+                || StringUtils.hasText(input.getBoard())
+                || input.getPassingYear() != null
+                || StringUtils.hasText(input.getRegistrationNumber());
+
         if (existing != null) {
-            // ✅ UPDATE CASE
-            if (input.getPercentage() != null) {
-                existing.setPercentage(input.getPercentage());
-            }
-            if (StringUtils.hasText(input.getBoard())) {
-                existing.setBoard(input.getBoard());
-            }
-            if (input.getPassingYear() != null) {
-                existing.setPassingYear(input.getPassingYear());
-            }
-            if (StringUtils.hasText(input.getRegistrationNumber())) {
-                existing.setRegistrationNumber(input.getRegistrationNumber());
-            }
+            existing.setPercentage(input.getPercentage());
+            existing.setBoard(StringUtils.hasText(input.getBoard()) ? input.getBoard().trim() : null);
+            existing.setPassingYear(input.getPassingYear());
+            existing.setRegistrationNumber(StringUtils.hasText(input.getRegistrationNumber())
+                    ? input.getRegistrationNumber().trim()
+                    : null);
 
             return repository.save(existing);
         }
 
-        // ✅ CREATE (IMPORTANT PART)
+        if (!hasAnyValue) {
+            return null;
+        }
+
         SscDetails newSsc = new SscDetails();
         newSsc.setPercentage(input.getPercentage());
-        newSsc.setBoard(input.getBoard());
+        newSsc.setBoard(StringUtils.hasText(input.getBoard()) ? input.getBoard().trim() : null);
         newSsc.setPassingYear(input.getPassingYear());
-        newSsc.setRegistrationNumber(input.getRegistrationNumber());
+        newSsc.setRegistrationNumber(StringUtils.hasText(input.getRegistrationNumber())
+                ? input.getRegistrationNumber().trim()
+                : null);
 
-        // 🔗 set BOTH sides
         newSsc.setStudent(student);
         student.setSscDetails(newSsc);
 
-        // ✅ Save only student (cascade will save SSC)
         studentRepository.save(student);
 
         return newSsc;

@@ -21,7 +21,11 @@ public class AdmissionDocumentReturnDto {
     private LocalDate returnedOn;
     private String reason;
     private String returnedBy;
+    private String documentHandler;
     private String actionType;
+    private String statusLabel;
+    private String returnedTo;
+    private String receivedBackFrom;
     private LocalDate resubmittedOn;
     private String resubmittedTo;
     private String resubmissionReason;

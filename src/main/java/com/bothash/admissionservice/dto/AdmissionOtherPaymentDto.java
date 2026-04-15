@@ -23,5 +23,6 @@ public class AdmissionOtherPaymentDto {
     private Long referencePaymentId;
     private String receiptName;
     private String receiptUrl;
+    private String invoiceNumber;
+    private String invoiceUrl;
 }
-

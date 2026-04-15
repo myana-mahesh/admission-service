@@ -10,6 +10,7 @@ public class PartialPaymentRequest {
     private BigDecimal amount;
     private String mode;
     private String txnRef;
+    private String remarks;
     private String receivedBy;
     private LocalDate paidOn;
     private UploadRequest receipt;

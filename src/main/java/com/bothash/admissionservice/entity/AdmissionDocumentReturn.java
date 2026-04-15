@@ -46,6 +46,9 @@ public class AdmissionDocumentReturn extends Auditable {
     @Column(length = 120)
     private String returnedBy;
 
+    @Column(length = 120)
+    private String documentHandler;
+
     @Column(length = 20)
     private String actionType;
 

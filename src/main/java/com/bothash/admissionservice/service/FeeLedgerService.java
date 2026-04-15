@@ -5,7 +5,9 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,24 +18,35 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import com.bothash.admissionservice.dto.FeeLedgerPaymentResponseDto;
 import com.bothash.admissionservice.dto.FeeLedgerResponseDto;
 import com.bothash.admissionservice.dto.FeeLedgerRowDto;
 import com.bothash.admissionservice.dto.FeeLedgerSummaryDto;
+import com.bothash.admissionservice.dto.FeePaymentGroupDto;
 import com.bothash.admissionservice.entity.AcademicYear;
 import com.bothash.admissionservice.entity.Admission2;
 import com.bothash.admissionservice.entity.BranchMaster;
 import com.bothash.admissionservice.entity.Course;
 import com.bothash.admissionservice.entity.FeeInstallment;
+import com.bothash.admissionservice.entity.FeeInvoice;
 import com.bothash.admissionservice.entity.FeeInstallmentPayment;
 import com.bothash.admissionservice.entity.FileUpload;
+import com.bothash.admissionservice.entity.Guardian;
 import com.bothash.admissionservice.entity.PaymentModeMaster;
 import com.bothash.admissionservice.entity.Student;
+import com.bothash.admissionservice.entity.StudentFeeSchedule;
+import com.bothash.admissionservice.enumpackage.GuardianRelation;
+import com.bothash.admissionservice.repository.FeeInvoiceRepository;
+import com.bothash.admissionservice.repository.FileUploadRepository;
+import com.bothash.admissionservice.service.impl.InvoiceServiceImpl;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.CommonAbstractCriteria;
 import jakarta.persistence.criteria.Expression;
+import jakarta.persistence.criteria.From;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
@@ -46,6 +59,8 @@ import lombok.RequiredArgsConstructor;
 public class FeeLedgerService {
 
     private final EntityManager entityManager;
+    private final FileUploadRepository uploadRepo;
+    private final FeeInvoiceRepository invoiceRepo;
 
     public FeeLedgerResponseDto search(
             String q,
@@ -91,9 +106,10 @@ public class FeeLedgerService {
         Map<Long, List<FeeInstallment>> byAdmission = installments.stream()
                 .filter(inst -> inst.getAdmission() != null)
                 .collect(Collectors.groupingBy(inst -> inst.getAdmission().getAdmissionId()));
+        Map<Long, Long> scheduleCountsByStudent = fetchScheduleCounts(admissionPage.admissionIds, byAdmission);
 
         List<FeeLedgerRowDto> rows = admissionPage.admissionIds.stream()
-                .map(id -> buildStudentRow(byAdmission.getOrDefault(id, List.of())))
+                .map(id -> buildStudentRow(byAdmission.getOrDefault(id, List.of()), scheduleCountsByStudent))
                 .filter(Objects::nonNull)
                 .toList();
 
@@ -107,7 +123,58 @@ public class FeeLedgerService {
                 .build();
     }
 
-    private FeeLedgerRowDto buildStudentRow(List<FeeInstallment> installments) {
+    public FeeLedgerPaymentResponseDto searchPayments(
+            String q,
+            List<Long> branchIds,
+            List<Long> courseIds,
+            String batch,
+            List<String> batchCodes,
+            Long academicYearId,
+            LocalDate startDate,
+            LocalDate endDate,
+            String dateType,
+            List<String> statusList,
+            String dueStatus,
+            List<String> paymentModes,
+            String verification,
+            String proofAttached,
+            String txnPresent,
+            String paidAmountOp,
+            BigDecimal paidAmount,
+            BigDecimal pendingMin,
+            BigDecimal pendingMax,
+            Boolean branchApprovedOnly,
+            Pageable pageable
+    ) {
+        FeeLedgerSummaryDto summary = querySummary(
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
+                startDate, endDate, dateType, statusList, dueStatus,
+                paymentModes, verification, proofAttached, txnPresent,
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly
+        );
+
+        PaymentGroupPage paymentGroupPage = queryPaymentGroupPage(
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
+                startDate, endDate, dateType, statusList, dueStatus,
+                paymentModes, verification, proofAttached, txnPresent,
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly, pageable
+        );
+
+        List<FeePaymentGroupDto> groups = paymentGroupPage.groups().isEmpty()
+                ? List.of()
+                : buildLedgerPaymentGroups(fetchPaymentsForGroupPage(paymentGroupPage.groups()));
+
+        return FeeLedgerPaymentResponseDto.builder()
+                .content(groups)
+                .page(pageable.getPageNumber())
+                .size(pageable.getPageSize())
+                .totalElements(paymentGroupPage.totalElements())
+                .totalPages(paymentGroupPage.totalPages())
+                .summary(summary)
+                .build();
+    }
+
+    private FeeLedgerRowDto buildStudentRow(List<FeeInstallment> installments, Map<Long, Long> scheduleCountsByStudent) {
         if (installments == null || installments.isEmpty()) {
             return null;
         }
@@ -157,13 +224,19 @@ public class FeeLedgerService {
                 .filter(e -> e.getValue() != null && e.getValue() > 0)
                 .map(e -> e.getKey() + "(" + e.getValue() + ")")
                 .collect(Collectors.joining(", "));
+        Long studentId = student != null ? student.getStudentId() : null;
+        long scheduleCount = (studentId != null && scheduleCountsByStudent != null)
+                ? scheduleCountsByStudent.getOrDefault(studentId, 0L)
+                : 0L;
 
         return FeeLedgerRowDto.builder()
                 .admissionId(admission.getAdmissionId())
-                .studentId(student != null ? student.getStudentId() : null)
+                .studentId(studentId)
                 .studentName(student != null ? student.getFullName() : null)
                 .absId(student != null ? student.getAbsId() : null)
                 .mobile(student != null ? student.getMobile() : null)
+                .fatherMobile(resolveGuardianMobile(student, GuardianRelation.Father))
+                .motherMobile(resolveGuardianMobile(student, GuardianRelation.Mother))
                 .branchId(branch != null ? branch.getId() : null)
                 .branchName(branch != null ? branch.getName() : null)
                 .courseId(course != null ? course.getCourseId() : null)
@@ -176,7 +249,62 @@ public class FeeLedgerService {
                 .dueNextDate(nextDueDate)
                 .dueNextAmount(nextDueAmount)
                 .statusSummary(statusSummary)
+                .hasSchedule(scheduleCount > 0)
+                .scheduleCount(scheduleCount)
                 .build();
+    }
+
+    private String resolveGuardianMobile(Student student, GuardianRelation relation) {
+        if (student == null || student.getGuardians() == null || relation == null) {
+            return null;
+        }
+        return student.getGuardians().stream()
+                .filter(Objects::nonNull)
+                .filter(guardian -> relation.equals(guardian.getRelation()))
+                .map(Guardian::getMobile)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Map<Long, Long> fetchScheduleCounts(List<Long> admissionIds, Map<Long, List<FeeInstallment>> byAdmission) {
+        if (admissionIds == null || admissionIds.isEmpty() || byAdmission == null || byAdmission.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Long> studentIds = admissionIds.stream()
+                .map(byAdmission::get)
+                .filter(Objects::nonNull)
+                .map(list -> list.isEmpty() ? null : list.get(0))
+                .filter(Objects::nonNull)
+                .map(FeeInstallment::getAdmission)
+                .filter(Objects::nonNull)
+                .map(Admission2::getStudent)
+                .filter(Objects::nonNull)
+                .map(Student::getStudentId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+
+        if (studentIds.isEmpty()) {
+            return Map.of();
+        }
+
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Object[]> cq = cb.createQuery(Object[].class);
+        Root<StudentFeeSchedule> root = cq.from(StudentFeeSchedule.class);
+        cq.multiselect(
+                root.get("student").get("studentId"),
+                cb.count(root.get("scheduleId"))
+        );
+        cq.where(root.get("student").get("studentId").in(studentIds));
+        cq.groupBy(root.get("student").get("studentId"));
+
+        return entityManager.createQuery(cq).getResultList().stream()
+                .collect(Collectors.toMap(
+                        row -> (Long) row[0],
+                        row -> ((Number) row[1]).longValue()
+                ));
     }
 
     private AdmissionPage queryAdmissionsPage(
@@ -212,10 +340,9 @@ public class FeeLedgerService {
         Join<Admission2, AcademicYear> year = admission.join("year", JoinType.LEFT);
         Join<Admission2, BranchMaster> lectureBranch = admission.join("lectureBranch", JoinType.LEFT);
         Join<Admission2, BranchMaster> admissionBranch = admission.join("admissionBranch", JoinType.LEFT);
-        Join<FeeInstallment, PaymentModeMaster> paymentMode = root.join("paymentMode", JoinType.LEFT);
 
         List<Predicate> predicates = buildPredicates(
-                cq, cb, root, admission, student, course, year, lectureBranch, admissionBranch, paymentMode,
+                cq, cb, root, admission, student, course, year, lectureBranch, admissionBranch,
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
@@ -223,82 +350,7 @@ public class FeeLedgerService {
                 false
         );
 
-        // Apply payment-related filters using FeeInstallmentPayment table
-        // These filters check actual payment records, not installment records
-        boolean hasPaymentFilters = (paymentModes != null && !paymentModes.isEmpty()) ||
-                                    StringUtils.hasText(verification) ||
-                                    StringUtils.hasText(proofAttached) ||
-                                    StringUtils.hasText(txnPresent);
-
-        if (hasPaymentFilters) {
-            Subquery<Long> paymentSubquery = cq.subquery(Long.class);
-            Root<FeeInstallmentPayment> paymentRoot = paymentSubquery.from(FeeInstallmentPayment.class);
-            Join<FeeInstallmentPayment, FeeInstallment> paymentInstallment = paymentRoot.join("installment", JoinType.INNER);
-            Join<FeeInstallment, Admission2> paymentAdmission = paymentInstallment.join("admission", JoinType.INNER);
-
-            List<Predicate> paymentPredicates = new ArrayList<>();
-
-            // Payment Mode filter
-            if (paymentModes != null && !paymentModes.isEmpty()) {
-                List<String> lower = paymentModes.stream()
-                        .filter(StringUtils::hasText)
-                        .map(String::toLowerCase)
-                        .toList();
-                if (!lower.isEmpty()) {
-                    Join<FeeInstallmentPayment, PaymentModeMaster> feePaymentMode = paymentRoot.join("paymentMode", JoinType.INNER);
-                    paymentPredicates.add(cb.lower(feePaymentMode.get("code")).in(lower));
-                }
-            }
-
-            // Verification filter
-            if (StringUtils.hasText(verification)) {
-                String v = verification.trim().toUpperCase();
-                switch (v) {
-                    case "VERIFIED" -> paymentPredicates.add(cb.isTrue(paymentRoot.get("isVerified")));
-                    case "NOT_VERIFIED" -> paymentPredicates.add(cb.or(
-                            cb.isFalse(paymentRoot.get("isVerified")),
-                            cb.isNull(paymentRoot.get("isVerified"))
-                    ));
-                    default -> {}
-                }
-            }
-
-            // Proof attached filter (check FileUpload table for payment receipts)
-            if (StringUtils.hasText(proofAttached)) {
-                String p = proofAttached.trim().toUpperCase();
-                Subquery<Long> fileSubquery = cq.subquery(Long.class);
-                Root<FileUpload> fileRoot = fileSubquery.from(FileUpload.class);
-                fileSubquery.select(cb.literal(1L));
-                fileSubquery.where(cb.equal(fileRoot.get("installmentPayment").get("paymentId"), paymentRoot.get("paymentId")));
-
-                if ("YES".equals(p)) {
-                    paymentPredicates.add(cb.exists(fileSubquery));
-                } else if ("NO".equals(p)) {
-                    paymentPredicates.add(cb.not(cb.exists(fileSubquery)));
-                }
-            }
-
-            // Transaction reference filter
-            if (StringUtils.hasText(txnPresent)) {
-                String t = txnPresent.trim().toUpperCase();
-                if ("YES".equals(t)) {
-                    paymentPredicates.add(cb.and(
-                            cb.isNotNull(paymentRoot.get("txnRef")),
-                            cb.notEqual(paymentRoot.get("txnRef"), "")
-                    ));
-                } else if ("NO".equals(t)) {
-                    paymentPredicates.add(cb.or(
-                            cb.isNull(paymentRoot.get("txnRef")),
-                            cb.equal(paymentRoot.get("txnRef"), "")
-                    ));
-                }
-            }
-
-            paymentSubquery.select(paymentAdmission.get("admissionId"));
-            paymentSubquery.where(paymentPredicates.toArray(new Predicate[0]));
-
-            predicates.add(admission.get("admissionId").in(paymentSubquery));
-        }
+        applyAdmissionPaymentFilters(cq, cb, admission, predicates, paymentModes, verification, proofAttached, txnPresent);
 
         cq.select(admission.get("admissionId")).distinct(true);
         cq.where(predicates.toArray(new Predicate[0]));
@@ -318,16 +370,16 @@ public class FeeLedgerService {
         Join<Admission2, AcademicYear> countYear = countAdmission.join("year", JoinType.LEFT);
         Join<Admission2, BranchMaster> countLectureBranch = countAdmission.join("lectureBranch", JoinType.LEFT);
         Join<Admission2, BranchMaster> countAdmissionBranch = countAdmission.join("admissionBranch", JoinType.LEFT);
-        Join<FeeInstallment, PaymentModeMaster> countPaymentMode = countRoot.join("paymentMode", JoinType.LEFT);
 
         List<Predicate> countPredicates = buildPredicates(
-                countCq, cb, countRoot, countAdmission, countStudent, countCourse, countYear, countLectureBranch, countAdmissionBranch, countPaymentMode,
+                countCq, cb, countRoot, countAdmission, countStudent, countCourse, countYear, countLectureBranch, countAdmissionBranch,
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
                 false
         );
+        applyAdmissionPaymentFilters(countCq, cb, countAdmission, countPredicates, paymentModes, verification, proofAttached, txnPresent);
         countCq.select(cb.countDistinct(countAdmission.get("admissionId")));
         countCq.where(countPredicates.toArray(new Predicate[0]));
         long total = entityManager.createQuery(countCq).getSingleResult();
@@ -346,6 +398,181 @@ public class FeeLedgerService {
     }
 
     private record AdmissionPage(List<Long> admissionIds, long totalElements, int totalPages) {}
+    private record PaymentGroupDescriptor(Long admissionId, String resolvedGroupKey) {}
+    private record PaymentGroupPage(List<PaymentGroupDescriptor> groups, long totalElements, int totalPages) {}
+
+    private PaymentGroupPage queryPaymentGroupPage(
+            String q,
+            List<Long> branchIds,
+            List<Long> courseIds,
+            String batch,
+            List<String> batchCodes,
+            Long academicYearId,
+            LocalDate startDate,
+            LocalDate endDate,
+            String dateType,
+            List<String> statusList,
+            String dueStatus,
+            List<String> paymentModes,
+            String verification,
+            String proofAttached,
+            String txnPresent,
+            String paidAmountOp,
+            BigDecimal paidAmount,
+            BigDecimal pendingMin,
+            BigDecimal pendingMax,
+            Boolean branchApprovedOnly,
+            Pageable pageable
+    ) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Object[]> cq = cb.createQuery(Object[].class);
+        Root<FeeInstallmentPayment> paymentRoot = cq.from(FeeInstallmentPayment.class);
+        Join<FeeInstallmentPayment, FeeInstallment> installment = paymentRoot.join("installment", JoinType.INNER);
+        Join<FeeInstallment, Admission2> admission = installment.join("admission", JoinType.LEFT);
+        Join<Admission2, Student> student = admission.join("student", JoinType.LEFT);
+        Join<Admission2, Course> course = admission.join("course", JoinType.LEFT);
+        Join<Admission2, AcademicYear> year = admission.join("year", JoinType.LEFT);
+        Join<Admission2, BranchMaster> lectureBranch = admission.join("lectureBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> admissionBranch = admission.join("admissionBranch", JoinType.LEFT);
+        Join<FeeInstallmentPayment, PaymentModeMaster> paymentMode = paymentRoot.join("paymentMode", JoinType.LEFT);
+
+        List<Predicate> predicates = buildPaymentPredicates(
+                cq, cb, paymentRoot, installment, admission, student, course, year, lectureBranch, admissionBranch,
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
+                startDate, endDate, dateType, statusList, dueStatus,
+                paymentModes, verification, proofAttached, txnPresent,
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
+                false
+        );
+        applyPaymentRecordFilters(cq, cb, predicates, paymentRoot, paymentModes, verification, proofAttached, txnPresent);
+
+        Expression<String> resolvedGroupKey = buildResolvedGroupKeyExpression(cb, paymentRoot, paymentMode);
+        Expression<LocalDate> sortDate = cb.function(
+                "max",
+                LocalDate.class,
+                cb.coalesce(paymentRoot.get("paidOn"), installment.get("dueDate"))
+        );
+        Expression<Long> maxPaymentId = cb.max(paymentRoot.get("paymentId"));
+
+        cq.multiselect(admission.get("admissionId"), resolvedGroupKey, sortDate, maxPaymentId);
+        cq.where(predicates.toArray(new Predicate[0]));
+        cq.groupBy(admission.get("admissionId"), resolvedGroupKey);
+        cq.orderBy(cb.desc(sortDate), cb.desc(maxPaymentId));
+
+        TypedQuery<Object[]> query = entityManager.createQuery(cq);
+        query.setFirstResult((int) pageable.getOffset());
+        query.setMaxResults(pageable.getPageSize());
+
+        List<PaymentGroupDescriptor> groups = query.getResultList().stream()
+                .map(row -> new PaymentGroupDescriptor((Long) row[0], (String) row[1]))
+                .toList();
+
+        CriteriaQuery<Object[]> countCq = cb.createQuery(Object[].class);
+        Root<FeeInstallmentPayment> countPaymentRoot = countCq.from(FeeInstallmentPayment.class);
+        Join<FeeInstallmentPayment, FeeInstallment> countInstallment = countPaymentRoot.join("installment", JoinType.INNER);
+        Join<FeeInstallment, Admission2> countAdmission = countInstallment.join("admission", JoinType.LEFT);
+        Join<Admission2, Student> countStudent = countAdmission.join("student", JoinType.LEFT);
+        Join<Admission2, Course> countCourse = countAdmission.join("course", JoinType.LEFT);
+        Join<Admission2, AcademicYear> countYear = countAdmission.join("year", JoinType.LEFT);
+        Join<Admission2, BranchMaster> countLectureBranch = countAdmission.join("lectureBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> countAdmissionBranch = countAdmission.join("admissionBranch", JoinType.LEFT);
+        Join<FeeInstallmentPayment, PaymentModeMaster> countPaymentMode = countPaymentRoot.join("paymentMode", JoinType.LEFT);
+
+        List<Predicate> countPredicates = buildPaymentPredicates(
+                countCq, cb, countPaymentRoot, countInstallment, countAdmission, countStudent, countCourse, countYear, countLectureBranch, countAdmissionBranch,
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
+                startDate, endDate, dateType, statusList, dueStatus,
+                paymentModes, verification, proofAttached, txnPresent,
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
+                false
+        );
+        applyPaymentRecordFilters(countCq, cb, countPredicates, countPaymentRoot, paymentModes, verification, proofAttached, txnPresent);
+        Expression<String> countResolvedGroupKey = buildResolvedGroupKeyExpression(cb, countPaymentRoot, countPaymentMode);
+        countCq.multiselect(countAdmission.get("admissionId"), countResolvedGroupKey);
+        countCq.where(countPredicates.toArray(new Predicate[0]));
+        countCq.groupBy(countAdmission.get("admissionId"), countResolvedGroupKey);
+
+        long total = entityManager.createQuery(countCq).getResultList().size();
+        int totalPages = pageable.getPageSize() == 0 ? 0 : (int) Math.ceil((double) total / pageable.getPageSize());
+        return new PaymentGroupPage(groups, total, totalPages);
+    }
+
+    private List<FeeInstallmentPayment> fetchPaymentsForGroupPage(List<PaymentGroupDescriptor> groups) {
+        if (groups == null || groups.isEmpty()) {
+            return List.of();
+        }
+
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<FeeInstallmentPayment> cq = cb.createQuery(FeeInstallmentPayment.class);
+        Root<FeeInstallmentPayment> paymentRoot = cq.from(FeeInstallmentPayment.class);
+        paymentRoot.fetch("paymentMode", JoinType.LEFT);
+        var installmentFetch = paymentRoot.fetch("installment", JoinType.INNER);
+        var admissionFetch = installmentFetch.fetch("admission", JoinType.LEFT);
+        admissionFetch.fetch("student", JoinType.LEFT);
+        admissionFetch.fetch("course", JoinType.LEFT);
+        admissionFetch.fetch("year", JoinType.LEFT);
+        admissionFetch.fetch("lectureBranch", JoinType.LEFT);
+        admissionFetch.fetch("admissionBranch", JoinType.LEFT);
+
+        Join<FeeInstallmentPayment, FeeInstallment> installment = paymentRoot.join("installment", JoinType.INNER);
+        Join<FeeInstallment, Admission2> admission = installment.join("admission", JoinType.LEFT);
+        Join<FeeInstallmentPayment, PaymentModeMaster> paymentMode = paymentRoot.join("paymentMode", JoinType.LEFT);
+        Expression<String> resolvedGroupKey = buildResolvedGroupKeyExpression(cb, paymentRoot, paymentMode);
+
+        List<Predicate> groupPredicates = new ArrayList<>();
+        for (PaymentGroupDescriptor group : groups) {
+            if (group == null || group.admissionId() == null || !StringUtils.hasText(group.resolvedGroupKey())) {
+                continue;
+            }
+            groupPredicates.add(cb.and(
+                    cb.equal(admission.get("admissionId"), group.admissionId()),
+                    cb.equal(resolvedGroupKey, group.resolvedGroupKey())
+            ));
+        }
+        if (groupPredicates.isEmpty()) {
+            return List.of();
+        }
+
+        cq.select(paymentRoot).distinct(true);
+        cq.where(cb.or(groupPredicates.toArray(new Predicate[0])));
+        return entityManager.createQuery(cq).getResultList();
+    }
+
+    private Expression<String> buildResolvedGroupKeyExpression(
+            CriteriaBuilder cb,
+            Root<FeeInstallmentPayment> paymentRoot,
+            Join<FeeInstallmentPayment, PaymentModeMaster> paymentMode
+    ) {
+        Expression<String> paymentGroupId = paymentRoot.get("paymentGroupId");
+        Expression<String> normalizedGroupId = cb.trim(cb.coalesce(paymentGroupId, ""));
+        Predicate hasGroupId = cb.notEqual(normalizedGroupId, "");
+        Expression<String> sign = cb.<String>selectCase()
+                .when(cb.lessThan(paymentRoot.get("amount"), BigDecimal.ZERO), "NEG")
+                .otherwise("POS");
+        Expression<String> paidOn = cb.coalesce(paymentRoot.get("paidOn").as(String.class), "");
+        Expression<String> mode = cb.upper(cb.trim(cb.coalesce(paymentMode.get("code"), "")));
+        Expression<String> txnRef = cb.upper(cb.trim(cb.coalesce(paymentRoot.get("txnRef"), "")));
+        Expression<String> receivedBy = cb.upper(cb.trim(cb.coalesce(paymentRoot.get("receivedBy"), "")));
+        Expression<String> createdSecond = cb.coalesce(
+                cb.function("DATE_FORMAT", String.class, paymentRoot.get("createdAt"), cb.literal("%Y-%m-%dT%H:%i:%s")),
+                cb.literal("NO_CREATED_AT")
+        );
+        Expression<String> legacyKey = concatWithPipes(cb, sign, paidOn, mode, txnRef, receivedBy, createdSecond);
+        return cb.<String>selectCase()
+                .when(hasGroupId, normalizedGroupId)
+                .otherwise(legacyKey);
+    }
+
+    private Expression<String> concatWithPipes(CriteriaBuilder cb, Expression<String>... parts) {
+        if (parts == null || parts.length == 0) {
+            return cb.literal("");
+        }
+        Expression<String> result = parts[0];
+        for (int index = 1; index < parts.length; index++) {
+            result = cb.concat(cb.concat(result, "|"), parts[index]);
+        }
+        return result;
+    }
 
     private FeeLedgerSummaryDto querySummary(
             String q,
@@ -383,10 +610,20 @@ public class FeeLedgerService {
                 paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
                 false
         );
+        BigDecimal totalCollected = asBigDecimal(admissionOnly[1]);
+        if (hasDateRange(startDate, endDate) && "PAID".equalsIgnoreCase(dateType)) {
+            totalCollected = queryCollectedAmount(
+                    q, branchIds, courseIds, batch, batchCodes, academicYearId,
+                    startDate, endDate, dateType, statusList, dueStatus,
+                    paymentModes, verification, proofAttached, txnPresent,
+                    paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
+                    true
+            );
+        }
 
         return FeeLedgerSummaryDto.builder()
                 .totalFeeAmount(asBigDecimal(admissionOnly[0]))
-                .totalCollected(asBigDecimal(admissionOnly[1]))
+                .totalCollected(totalCollected)
                 .totalPending(asBigDecimal(admissionOnly[2]))
                 .overdueAmount(asBigDecimal(admissionOnly[3]))
                 .dueNext7DaysAmount(asBigDecimal(combined[4]))
@@ -428,16 +665,16 @@ public class FeeLedgerService {
         Join<Admission2, AcademicYear> year = admission.join("year", JoinType.LEFT);
         Join<Admission2, BranchMaster> lectureBranch = admission.join("lectureBranch", JoinType.LEFT);
         Join<Admission2, BranchMaster> admissionBranch = admission.join("admissionBranch", JoinType.LEFT);
-        Join<FeeInstallment, PaymentModeMaster> paymentMode = root.join("paymentMode", JoinType.LEFT);
 
         List<Predicate> predicates = buildPredicates(
-                cq, cb, root, admission, student, course, year, lectureBranch, admissionBranch, paymentMode,
+                cq, cb, root, admission, student, course, year, lectureBranch, admissionBranch,
                 q, branchIds, courseIds, batch, batchCodes, academicYearId,
                 startDate, endDate, dateType, statusList, dueStatus,
                 paymentModes, verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
                 admissionBranchOnly
         );
+        applyAdmissionPaymentFilters(cq, cb, admission, predicates, paymentModes, verification, proofAttached, txnPresent);
 
         Expression<BigDecimal> due = cb.coalesce(root.get("amountDue").as(BigDecimal.class), BigDecimal.ZERO);
         Expression<BigDecimal> paid = cb.coalesce(root.get("amountPaid").as(BigDecimal.class), BigDecimal.ZERO);
@@ -486,17 +723,67 @@ public class FeeLedgerService {
         return entityManager.createQuery(cq).getSingleResult();
     }
 
+    private BigDecimal queryCollectedAmount(
+            String q,
+            List<Long> branchIds,
+            List<Long> courseIds,
+            String batch,
+            List<String> batchCodes,
+            Long academicYearId,
+            LocalDate startDate,
+            LocalDate endDate,
+            String dateType,
+            List<String> statusList,
+            String dueStatus,
+            List<String> paymentModes,
+            String verification,
+            String proofAttached,
+            String txnPresent,
+            String paidAmountOp,
+            BigDecimal paidAmount,
+            BigDecimal pendingMin,
+            BigDecimal pendingMax,
+            Boolean branchApprovedOnly,
+            boolean admissionBranchOnly
+    ) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<BigDecimal> cq = cb.createQuery(BigDecimal.class);
+        Root<FeeInstallmentPayment> paymentRoot = cq.from(FeeInstallmentPayment.class);
+
+        Join<FeeInstallmentPayment, FeeInstallment> installment = paymentRoot.join("installment", JoinType.INNER);
+        Join<FeeInstallment, Admission2> admission = installment.join("admission", JoinType.LEFT);
+        Join<Admission2, Student> student = admission.join("student", JoinType.LEFT);
+        Join<Admission2, Course> course = admission.join("course", JoinType.LEFT);
+        Join<Admission2, AcademicYear> year = admission.join("year", JoinType.LEFT);
+        Join<Admission2, BranchMaster> lectureBranch = admission.join("lectureBranch", JoinType.LEFT);
+        Join<Admission2, BranchMaster> admissionBranch = admission.join("admissionBranch", JoinType.LEFT);
+
+        List<Predicate> predicates = buildPredicates(
+                cq, cb, installment, admission, student, course, year, lectureBranch, admissionBranch,
+                q, branchIds, courseIds, batch, batchCodes, academicYearId,
+                startDate, endDate, dateType, statusList, dueStatus,
+                paymentModes, verification, proofAttached, txnPresent,
+                paidAmountOp, paidAmount, pendingMin, pendingMax, branchApprovedOnly,
+                admissionBranchOnly
+        );
+        applyPaymentRecordFilters(cq, cb, predicates, paymentRoot, paymentModes, verification, proofAttached, txnPresent);
+        applyLocalDateRange(cb, predicates, paymentRoot.get("paidOn"), startDate, endDate);
+
+        cq.select(cb.coalesce(cb.sum(cb.coalesce(paymentRoot.get("amount"), BigDecimal.ZERO)), BigDecimal.ZERO));
+        cq.where(predicates.toArray(new Predicate[0]));
+        return entityManager.createQuery(cq).getSingleResult();
+    }
+
     private List<Predicate> buildPredicates(
             CriteriaQuery<?> query,
             CriteriaBuilder cb,
-            Root<FeeInstallment> root,
+            From<?, FeeInstallment> root,
             Join<FeeInstallment, Admission2> admission,
             Join<Admission2, Student> student,
             Join<Admission2, Course> course,
             Join<Admission2, AcademicYear> year,
             Join<Admission2, BranchMaster> lectureBranch,
             Join<Admission2, BranchMaster> admissionBranch,
-            Join<FeeInstallment, PaymentModeMaster> paymentMode,
             String q,
             List<Long> branchIds,
             List<Long> courseIds,
@@ -557,6 +844,8 @@ public class FeeLedgerService {
 
         if ("PAID".equalsIgnoreCase(dateType)) {
             applyPaymentDateFilter(query, cb, admission, predicates, startDate, endDate);
+        } else if ("SCHEDULE".equalsIgnoreCase(dateType)) {
+            applyScheduleDateFilter(query, cb, student, predicates, startDate, endDate);
         } else {
             applyDateFilter(cb, root, predicates, startDate, endDate, dateType);
         }
@@ -573,7 +862,7 @@ public class FeeLedgerService {
         return predicates;
     }
 
-    private void applyDateFilter(CriteriaBuilder cb, Root<FeeInstallment> root, List<Predicate> predicates,
+    private void applyDateFilter(CriteriaBuilder cb, From<?, FeeInstallment> root, List<Predicate> predicates,
                                  LocalDate startDate, LocalDate endDate, String dateType) {
         if (startDate == null && endDate == null) {
             return;
@@ -593,6 +882,121 @@ public class FeeLedgerService {
             }
         } else {
             applyLocalDateRange(cb, predicates, root.get("dueDate"), startDate, endDate);
+        }
+    }
+
+    private List<Predicate> buildPaymentPredicates(
+            CriteriaQuery<?> query,
+            CriteriaBuilder cb,
+            Root<FeeInstallmentPayment> paymentRoot,
+            Join<FeeInstallmentPayment, FeeInstallment> installment,
+            Join<FeeInstallment, Admission2> admission,
+            Join<Admission2, Student> student,
+            Join<Admission2, Course> course,
+            Join<Admission2, AcademicYear> year,
+            Join<Admission2, BranchMaster> lectureBranch,
+            Join<Admission2, BranchMaster> admissionBranch,
+            String q,
+            List<Long> branchIds,
+            List<Long> courseIds,
+            String batch,
+            List<String> batchCodes,
+            Long academicYearId,
+            LocalDate startDate,
+            LocalDate endDate,
+            String dateType,
+            List<String> statusList,
+            String dueStatus,
+            List<String> paymentModes,
+            String verification,
+            String proofAttached,
+            String txnPresent,
+            String paidAmountOp,
+            BigDecimal paidAmount,
+            BigDecimal pendingMin,
+            BigDecimal pendingMax,
+            Boolean branchApprovedOnly,
+            boolean admissionBranchOnly
+    ) {
+        List<Predicate> predicates = new ArrayList<>();
+
+        if (StringUtils.hasText(q)) {
+            String like = "%" + q.toLowerCase().trim() + "%";
+            predicates.add(cb.or(
+                    cb.like(cb.lower(student.get("fullName")), like),
+                    cb.like(cb.lower(student.get("absId")), like),
+                    cb.like(cb.lower(student.get("mobile")), like),
+                    cb.like(cb.lower(paymentRoot.get("txnRef")), like)
+            ));
+        }
+
+        if (branchIds != null && !branchIds.isEmpty()) {
+            if (admissionBranchOnly) {
+                predicates.add(admissionBranch.get("id").in(branchIds));
+            } else {
+                predicates.add(cb.or(
+                        lectureBranch.get("id").in(branchIds),
+                        admissionBranch.get("id").in(branchIds)
+                ));
+            }
+        }
+        if (courseIds != null && !courseIds.isEmpty()) {
+            predicates.add(course.get("courseId").in(courseIds));
+        }
+        if (StringUtils.hasText(batch)) {
+            predicates.add(cb.equal(admission.get("batch"), batch));
+        } else if (batchCodes != null && !batchCodes.isEmpty()) {
+            predicates.add(admission.get("batch").in(batchCodes));
+        }
+        if (academicYearId != null) {
+            predicates.add(cb.equal(year.get("yearId"), academicYearId));
+        }
+        if (branchApprovedOnly != null) {
+            predicates.add(cb.equal(admission.get("branchApproved"), branchApprovedOnly));
+        }
+
+        String normalizedDateType = dateType == null ? "DUE" : dateType.toUpperCase();
+        if ("PAID".equals(normalizedDateType)) {
+            applyLocalDateRange(cb, predicates, paymentRoot.get("paidOn"), startDate, endDate);
+        } else if ("CREATED".equals(normalizedDateType)) {
+            applyOffsetDateRange(cb, predicates, paymentRoot.get("createdAt"), startDate, endDate);
+        } else if ("SCHEDULE".equals(normalizedDateType)) {
+            applyScheduleDateFilter(query, cb, student, predicates, startDate, endDate);
+        } else {
+            applyLocalDateRange(cb, predicates, installment.get("dueDate"), startDate, endDate);
+        }
+
+        applyStatusFilter(cb, installment, predicates, statusList);
+        applyDueStatusFilter(cb, installment, predicates, dueStatus);
+        applyPaidAmountFilter(query, cb, admission, predicates, paidAmountOp, paidAmount);
+        applyPendingRangeFilter(query, cb, admission, predicates, pendingMin, pendingMax);
+
+        return predicates;
+    }
+
+    private void applyOffsetDateRange(
+            CriteriaBuilder cb,
+            List<Predicate> predicates,
+            Expression<OffsetDateTime> field,
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
+        if (startDate == null && endDate == null) {
+            return;
+        }
+        OffsetDateTime start = startDate != null
+                ? OffsetDateTime.of(startDate, LocalTime.MIN, ZoneOffset.UTC)
+                : null;
+        OffsetDateTime end = endDate != null
+                ? OffsetDateTime.of(endDate.plusDays(1), LocalTime.MIN, ZoneOffset.UTC)
+                : null;
+
+        if (start != null && end != null) {
+            predicates.add(cb.between(field, start, end));
+        } else if (start != null) {
+            predicates.add(cb.greaterThanOrEqualTo(field, start));
+        } else if (end != null) {
+            predicates.add(cb.lessThan(field, end));
         }
     }
 
@@ -617,6 +1021,25 @@ public class FeeLedgerService {
         predicates.add(admission.get("admissionId").in(paymentSubquery));
     }
 
+    private void applyScheduleDateFilter(CriteriaQuery<?> cq, CriteriaBuilder cb,
+                                         Join<Admission2, Student> student,
+                                         List<Predicate> predicates,
+                                         LocalDate startDate, LocalDate endDate) {
+        if (startDate == null && endDate == null) {
+            return;
+        }
+
+        Subquery<Long> scheduleSubquery = cq.subquery(Long.class);
+        Root<StudentFeeSchedule> scheduleRoot = scheduleSubquery.from(StudentFeeSchedule.class);
+        List<Predicate> schedulePredicates = new ArrayList<>();
+        schedulePredicates.add(cb.equal(scheduleRoot.get("student").get("studentId"), student.get("studentId")));
+        applyLocalDateRange(cb, schedulePredicates, scheduleRoot.get("scheduledDate"), startDate, endDate);
+        scheduleSubquery.select(scheduleRoot.get("student").get("studentId"));
+        scheduleSubquery.where(schedulePredicates.toArray(new Predicate[0]));
+
+        predicates.add(cb.exists(scheduleSubquery));
+    }
+
     private void applyLocalDateRange(CriteriaBuilder cb, List<Predicate> predicates,
                                      Expression<LocalDate> field, LocalDate start, LocalDate end) {
         if (start != null && end != null) {
@@ -628,7 +1051,7 @@ public class FeeLedgerService {
         }
     }
 
-    private void applyStatusFilter(CriteriaBuilder cb, Root<FeeInstallment> root,
+    private void applyStatusFilter(CriteriaBuilder cb, From<?, FeeInstallment> root,
                                    List<Predicate> predicates, List<String> statusList) {
         if (statusList == null || statusList.isEmpty()) {
             return;
@@ -669,7 +1092,7 @@ public class FeeLedgerService {
         }
     }
 
-    private void applyDueStatusFilter(CriteriaBuilder cb, Root<FeeInstallment> root,
+    private void applyDueStatusFilter(CriteriaBuilder cb, From<?, FeeInstallment> root,
                                       List<Predicate> predicates, String dueStatus) {
         if (!StringUtils.hasText(dueStatus)) {
             return;
@@ -703,6 +1126,113 @@ public class FeeLedgerService {
             default -> {
             }
         }
+    }
+
+    private void applyAdmissionPaymentFilters(
+            CriteriaQuery<?> query,
+            CriteriaBuilder cb,
+            Join<FeeInstallment, Admission2> admission,
+            List<Predicate> predicates,
+            List<String> paymentModes,
+            String verification,
+            String proofAttached,
+            String txnPresent
+    ) {
+        if (!hasPaymentRecordFilters(paymentModes, verification, proofAttached, txnPresent)) {
+            return;
+        }
+        Subquery<Long> paymentSubquery = query.subquery(Long.class);
+        Root<FeeInstallmentPayment> paymentRoot = paymentSubquery.from(FeeInstallmentPayment.class);
+        Join<FeeInstallmentPayment, FeeInstallment> paymentInstallment = paymentRoot.join("installment", JoinType.INNER);
+        Join<FeeInstallment, Admission2> paymentAdmission = paymentInstallment.join("admission", JoinType.INNER);
+
+        List<Predicate> paymentPredicates = new ArrayList<>();
+        applyPaymentRecordFilters(paymentSubquery, cb, paymentPredicates, paymentRoot, paymentModes, verification, proofAttached, txnPresent);
+
+        paymentSubquery.select(paymentAdmission.get("admissionId"));
+        paymentSubquery.where(paymentPredicates.toArray(new Predicate[0]));
+        predicates.add(admission.get("admissionId").in(paymentSubquery));
+    }
+
+    private void applyPaymentRecordFilters(
+            CommonAbstractCriteria query,
+            CriteriaBuilder cb,
+            List<Predicate> predicates,
+            Root<FeeInstallmentPayment> paymentRoot,
+            List<String> paymentModes,
+            String verification,
+            String proofAttached,
+            String txnPresent
+    ) {
+        if (paymentModes != null && !paymentModes.isEmpty()) {
+            List<String> lower = paymentModes.stream()
+                    .filter(StringUtils::hasText)
+                    .map(String::trim)
+                    .map(String::toLowerCase)
+                    .toList();
+            if (!lower.isEmpty()) {
+                Join<FeeInstallmentPayment, PaymentModeMaster> feePaymentMode = paymentRoot.join("paymentMode", JoinType.INNER);
+                predicates.add(cb.lower(feePaymentMode.get("code")).in(lower));
+            }
+        }
+
+        if (StringUtils.hasText(verification)) {
+            String value = verification.trim().toUpperCase();
+            switch (value) {
+                case "VERIFIED" -> predicates.add(cb.isTrue(paymentRoot.get("isVerified")));
+                case "NOT_VERIFIED" -> predicates.add(cb.or(
+                        cb.isFalse(paymentRoot.get("isVerified")),
+                        cb.isNull(paymentRoot.get("isVerified"))
+                ));
+                default -> {
+                }
+            }
+        }
+
+        if (StringUtils.hasText(proofAttached)) {
+            String value = proofAttached.trim().toUpperCase();
+            Subquery<Long> fileSubquery = query.subquery(Long.class);
+            Root<FileUpload> fileRoot = fileSubquery.from(FileUpload.class);
+            fileSubquery.select(cb.literal(1L));
+            fileSubquery.where(cb.equal(fileRoot.get("installmentPayment").get("paymentId"), paymentRoot.get("paymentId")));
+
+            if ("YES".equals(value)) {
+                predicates.add(cb.exists(fileSubquery));
+            } else if ("NO".equals(value)) {
+                predicates.add(cb.not(cb.exists(fileSubquery)));
+            }
+        }
+
+        if (StringUtils.hasText(txnPresent)) {
+            String value = txnPresent.trim().toUpperCase();
+            if ("YES".equals(value)) {
+                predicates.add(cb.and(
+                        cb.isNotNull(paymentRoot.get("txnRef")),
+                        cb.notEqual(paymentRoot.get("txnRef"), "")
+                ));
+            } else if ("NO".equals(value)) {
+                predicates.add(cb.or(
+                        cb.isNull(paymentRoot.get("txnRef")),
+                        cb.equal(paymentRoot.get("txnRef"), "")
+                ));
+            }
+        }
+    }
+
+    private boolean hasPaymentRecordFilters(
+            List<String> paymentModes,
+            String verification,
+            String proofAttached,
+            String txnPresent
+    ) {
+        return (paymentModes != null && !paymentModes.isEmpty())
+                || StringUtils.hasText(verification)
+                || StringUtils.hasText(proofAttached)
+                || StringUtils.hasText(txnPresent);
+    }
+
+    private boolean hasDateRange(LocalDate startDate, LocalDate endDate) {
+        return startDate != null || endDate != null;
     }
 
     // Removed applyVerificationFilter, applyProofFilter, and applyTxnFilter methods
@@ -754,6 +1284,179 @@ public class FeeLedgerService {
             default -> {
             }
         }
+    }
+
+    private List<FeePaymentGroupDto> buildLedgerPaymentGroups(List<FeeInstallmentPayment> payments) {
+        if (payments == null || payments.isEmpty()) {
+            return List.of();
+        }
+        List<Long> paymentIds = payments.stream()
+                .map(FeeInstallmentPayment::getPaymentId)
+                .filter(Objects::nonNull)
+                .toList();
+        Map<Long, List<FileUpload>> uploadsByPayment = paymentIds.isEmpty()
+                ? Map.of()
+                : uploadRepo.findByInstallmentPayment_PaymentIdIn(paymentIds).stream()
+                        .filter(upload -> upload.getInstallmentPayment() != null && upload.getInstallmentPayment().getPaymentId() != null)
+                        .collect(Collectors.groupingBy(upload -> upload.getInstallmentPayment().getPaymentId(), LinkedHashMap::new, Collectors.toList()));
+
+        Map<String, List<FeeInstallmentPayment>> grouped = payments.stream()
+                .collect(Collectors.groupingBy(this::resolveLedgerPaymentGroupKey, LinkedHashMap::new, Collectors.toList()));
+
+        return grouped.entrySet().stream()
+                .map(entry -> toLedgerPaymentGroupDto(entry.getKey(), entry.getValue(), uploadsByPayment))
+                .sorted(Comparator.comparing(FeePaymentGroupDto::getPaidOn, Comparator.nullsLast(Comparator.naturalOrder())).reversed()
+                        .thenComparing(FeePaymentGroupDto::getPaymentGroupId, Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
+    }
+
+    private String resolveLedgerPaymentGroupKey(FeeInstallmentPayment payment) {
+        Long admissionId = payment != null
+                && payment.getInstallment() != null
+                && payment.getInstallment().getAdmission() != null
+                ? payment.getInstallment().getAdmission().getAdmissionId()
+                : null;
+        String groupId = StringUtils.hasText(payment.getPaymentGroupId())
+                ? payment.getPaymentGroupId()
+                : buildLedgerLegacyClusterKey(payment);
+        return (admissionId != null ? admissionId.toString() : "NO_ADMISSION") + "::" + groupId;
+    }
+
+    private String buildLedgerLegacyClusterKey(FeeInstallmentPayment payment) {
+        String sign = payment.getAmount() != null && payment.getAmount().compareTo(BigDecimal.ZERO) < 0 ? "NEG" : "POS";
+        String paidOn = payment.getPaidOn() != null ? payment.getPaidOn().toString() : "";
+        String mode = payment.getPaymentMode() != null && StringUtils.hasText(payment.getPaymentMode().getCode())
+                ? payment.getPaymentMode().getCode().trim().toUpperCase()
+                : "";
+        String txnRef = StringUtils.hasText(payment.getTxnRef()) ? payment.getTxnRef().trim().toUpperCase() : "";
+        String receivedBy = StringUtils.hasText(payment.getReceivedBy()) ? payment.getReceivedBy().trim().toUpperCase() : "";
+        String createdSecond = payment.getCreatedAt() != null
+                ? payment.getCreatedAt().withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime().truncatedTo(ChronoUnit.SECONDS).toString()
+                : "NO_CREATED_AT";
+        return String.join("|", sign, paidOn, mode, txnRef, receivedBy, createdSecond);
+    }
+
+    private FeePaymentGroupDto toLedgerPaymentGroupDto(
+            String groupKey,
+            List<FeeInstallmentPayment> groupPayments,
+            Map<Long, List<FileUpload>> uploadsByPayment
+    ) {
+        groupPayments.sort(Comparator.comparing(FeeInstallmentPayment::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(FeeInstallmentPayment::getPaymentId, Comparator.nullsLast(Comparator.naturalOrder())));
+        FeeInstallmentPayment firstPayment = groupPayments.get(0);
+        FeeInstallment firstInstallment = firstPayment.getInstallment();
+        Admission2 admission = firstInstallment != null ? firstInstallment.getAdmission() : null;
+        Student student = admission != null ? admission.getStudent() : null;
+        Course course = admission != null ? admission.getCourse() : null;
+        AcademicYear year = admission != null ? admission.getYear() : null;
+        BranchMaster branch = admission != null ? admission.getLectureBranch() : null;
+
+        FeePaymentGroupDto dto = new FeePaymentGroupDto();
+        dto.setAdmissionId(admission != null ? admission.getAdmissionId() : null);
+        dto.setStudentId(student != null ? student.getStudentId() : null);
+        dto.setStudentName(student != null ? student.getFullName() : null);
+        dto.setAbsId(student != null ? student.getAbsId() : null);
+        dto.setMobile(student != null ? student.getMobile() : null);
+        dto.setFatherMobile(resolveGuardianMobile(student, GuardianRelation.Father));
+        dto.setMotherMobile(resolveGuardianMobile(student, GuardianRelation.Mother));
+        dto.setBranchId(branch != null ? branch.getId() : null);
+        dto.setBranchName(branch != null ? branch.getName() : null);
+        dto.setCourseId(course != null ? course.getCourseId() : null);
+        dto.setCourseName(course != null ? course.getName() : null);
+        dto.setBatch(admission != null ? admission.getBatch() : null);
+        dto.setAcademicYear(year != null ? year.getLabel() : null);
+        dto.setPaymentGroupId(StringUtils.hasText(firstPayment.getPaymentGroupId()) ? firstPayment.getPaymentGroupId() : groupKey);
+        dto.setPaidOn(resolvePaidOn(groupPayments));
+        dto.setTotalAmount(sumPaymentAmounts(groupPayments));
+        dto.setPaymentMode(resolvePaymentModeCode(groupPayments));
+        dto.setTxnRef(firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getTxnRef).toList()));
+        dto.setRemarks(firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getRemarks).toList()));
+        dto.setReceivedBy(firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getReceivedBy).toList()));
+        boolean verified = groupPayments.stream().allMatch(payment -> Boolean.TRUE.equals(payment.getIsVerified()));
+        boolean accountHeadVerified = groupPayments.stream().allMatch(payment -> Boolean.TRUE.equals(payment.getIsAccountHeadVerified()));
+        dto.setVerified(verified);
+        dto.setAccountHeadVerified(accountHeadVerified);
+        dto.setStatus(verified ? "Paid" : "Under Verification");
+        dto.setAllocationCount(groupPayments.size());
+        FileUpload receipt = resolveFirstReceipt(groupPayments, uploadsByPayment);
+        if (receipt != null) {
+            dto.setReceiptUrl(receipt.getStorageUrl());
+            dto.setReceiptName(receipt.getFilename());
+        }
+        FeeInvoice invoice = resolveGroupedInvoice(groupPayments);
+        if (invoice != null) {
+            dto.setInvoiceNumber(invoice.getInvoiceNumber());
+            dto.setInvoiceUrl(invoice.getDownloadUrl());
+        }
+        return dto;
+    }
+
+    private FileUpload resolveFirstReceipt(List<FeeInstallmentPayment> groupPayments, Map<Long, List<FileUpload>> uploadsByPayment) {
+        for (FeeInstallmentPayment payment : groupPayments) {
+            List<FileUpload> uploads = uploadsByPayment.get(payment.getPaymentId());
+            if (uploads != null && !uploads.isEmpty()) {
+                return uploads.get(0);
+            }
+        }
+        return null;
+    }
+
+    private FeeInvoice resolveGroupedInvoice(List<FeeInstallmentPayment> groupPayments) {
+        List<Long> paymentIds = groupPayments.stream()
+                .map(FeeInstallmentPayment::getPaymentId)
+                .filter(Objects::nonNull)
+                .toList();
+        if (paymentIds.isEmpty()) {
+            return null;
+        }
+        List<FeeInvoice> invoices = invoiceRepo.findByPayment_PaymentIdIn(paymentIds);
+        Comparator<FeeInvoice> invoiceOrder = Comparator
+                .comparing(FeeInvoice::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(FeeInvoice::getId, Comparator.nullsLast(Comparator.naturalOrder()));
+        if (groupPayments.size() == 1) {
+            return invoices.stream()
+                    .sorted(invoiceOrder)
+                    .filter(invoice -> !InvoiceServiceImpl.isPaymentGroupInvoiceNumber(invoice.getInvoiceNumber()))
+                    .findFirst()
+                    .orElseGet(() -> invoices.stream().sorted(invoiceOrder).findFirst().orElse(null));
+        }
+        return invoices.stream()
+                .sorted(invoiceOrder)
+                .filter(invoice -> InvoiceServiceImpl.isPaymentGroupInvoiceNumber(invoice.getInvoiceNumber()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private BigDecimal sumPaymentAmounts(List<FeeInstallmentPayment> payments) {
+        return payments.stream()
+                .map(FeeInstallmentPayment::getAmount)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private String resolvePaymentModeCode(List<FeeInstallmentPayment> payments) {
+        return payments.stream()
+                .map(FeeInstallmentPayment::getPaymentMode)
+                .filter(Objects::nonNull)
+                .map(PaymentModeMaster::getCode)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private LocalDate resolvePaidOn(List<FeeInstallmentPayment> payments) {
+        return payments.stream()
+                .map(FeeInstallmentPayment::getPaidOn)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private String firstNonBlank(List<String> values) {
+        return values.stream()
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(null);
     }
 
     private BigDecimal asBigDecimal(Object value) {

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.bothash.admissionservice.dto.FeeLedgerPaymentResponseDto;
 import com.bothash.admissionservice.dto.FeeLedgerResponseDto;
 import com.bothash.admissionservice.service.FeeLedgerService;
 
@@ -75,6 +76,63 @@ public class FeeLedgerController {
         }
 
         FeeLedgerResponseDto response = feeLedgerService.search(
+                q, branchIdList, courseIdList, batch, batchCodeList, academicYearId,
+                startDate, endDate, dateType,
+                statusList, dueStatus, paymentModes,
+                verification, proofAttached, txnPresent,
+                paidAmountOp, paidAmount,
+                pendingMin, pendingMax, branchApprovedOnly, pageable
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/ledger/payments")
+    public ResponseEntity<FeeLedgerPaymentResponseDto> paymentLedger(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "25") int size,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Long branchId,
+            @RequestParam(required = false) String branchIds,
+            @RequestParam(required = false) Long courseId,
+            @RequestParam(required = false) String courseIds,
+            @RequestParam(required = false) String batch,
+            @RequestParam(required = false) String batchCodes,
+            @RequestParam(required = false) Long academicYearId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(defaultValue = "DUE") String dateType,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String dueStatus,
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String verification,
+            @RequestParam(required = false) String proofAttached,
+            @RequestParam(required = false) String txnPresent,
+            @RequestParam(required = false) String paidAmountOp,
+            @RequestParam(required = false) BigDecimal paidAmount,
+            @RequestParam(required = false) BigDecimal pendingMin,
+            @RequestParam(required = false) BigDecimal pendingMax,
+            @RequestParam(required = false) Boolean branchApprovedOnly
+    ) {
+        Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(size, 200),
+                Sort.by(Sort.Direction.DESC, "paidOn"));
+
+        List<String> statusList = splitCsv(status);
+        List<String> paymentModes = splitCsv(paymentMode);
+        List<Long> branchIdList = splitLongCsv(branchIds);
+        if (branchId != null) {
+            branchIdList = List.of(branchId);
+        }
+        List<Long> courseIdList = splitLongCsv(courseIds);
+        if (courseId != null) {
+            courseIdList = List.of(courseId);
+        }
+        List<String> batchCodeList = splitCsv(batchCodes);
+        if (batch != null && !batch.isBlank()) {
+            batchCodeList = List.of();
+        }
+
+        FeeLedgerPaymentResponseDto response = feeLedgerService.searchPayments(
                 q, branchIdList, courseIdList, batch, batchCodeList, academicYearId,
                 startDate, endDate, dateType,
                 statusList, dueStatus, paymentModes,

@@ -23,6 +23,7 @@ import lombok.Setter;
 @Table(name = "fee_installment_payment",
        indexes = {
            @Index(name = "idx_fee_pay_installment", columnList = "installment_id"),
+           @Index(name = "idx_fee_pay_group", columnList = "payment_group_id"),
            @Index(name = "idx_fee_pay_mode", columnList = "payment_mode_id"),
            @Index(name = "idx_fee_pay_verified", columnList = "is_verified"),
            @Index(name = "idx_fee_pay_txn_ref", columnList = "txn_ref"),
@@ -45,12 +46,18 @@ public class FeeInstallmentPayment extends Auditable {
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal amount;
 
+    @Column(name = "payment_group_id", length = 36)
+    private String paymentGroupId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "payment_mode_id")
     private PaymentModeMaster paymentMode;
 
     @Column(length = 120)
     private String txnRef;
+
+    @Column(length = 500)
+    private String remarks;
 
     @Column(length = 120)
     private String receivedBy;

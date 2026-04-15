@@ -15,6 +15,7 @@ import com.bothash.admissionservice.dto.CollegeCourseSeatDto;
 import com.bothash.admissionservice.entity.College;
 import com.bothash.admissionservice.entity.CollegeCourse;
 import com.bothash.admissionservice.entity.Course;
+import com.bothash.admissionservice.repository.Admission2Repository;
 import com.bothash.admissionservice.repository.CollegeRepository;
 import com.bothash.admissionservice.repository.CourseRepository;
 
@@ -26,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 public class CollegeService {
     private final CollegeRepository collegeRepository;
     private final CourseRepository courseRepository;
+    private final Admission2Repository admission2Repository;
 
     @Transactional
     public List<CollegeDto> listAll() {
@@ -99,8 +101,12 @@ public class CollegeService {
         return mapToDto(saved);
     }
 
+    @Transactional
     public void delete(Long collegeId) {
-        collegeRepository.deleteById(collegeId);
+        College college = collegeRepository.findById(collegeId)
+                .orElseThrow(() -> new IllegalArgumentException("College not found: " + collegeId));
+        admission2Repository.clearCollegeReferences(collegeId);
+        collegeRepository.delete(college);
     }
 
     @Transactional

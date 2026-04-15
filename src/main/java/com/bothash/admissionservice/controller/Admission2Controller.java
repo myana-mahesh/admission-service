@@ -47,19 +47,24 @@ public class Admission2Controller {
   }
 
   @GetMapping("/by-mobile")
-  public ResponseEntity<Map<String, Object>> getByMobile(@RequestParam String mobile) {
-    if (!org.springframework.util.StringUtils.hasText(mobile)) {
+  public ResponseEntity<Map<String, Object>> getByMobile(@RequestParam String mobile,
+                                                         @RequestParam(required = false) Long courseId) {
+    if (!org.springframework.util.StringUtils.hasText(mobile) || courseId == null) {
       return ResponseEntity.badRequest().body(Map.of("exists", false));
     }
-    Admission2 admission = admission2Repository.findFirstByStudent_MobileOrderByCreatedAtDesc(mobile.trim());
+    Admission2 admission = admission2Repository
+        .findFirstByStudent_MobileAndCourse_CourseIdOrderByCreatedAtDesc(mobile.trim(), courseId);
     if (admission == null) {
       return ResponseEntity.ok(Map.of("exists", false));
     }
     String studentName = admission.getStudent() != null ? admission.getStudent().getFullName() : null;
     Long studentId = admission.getStudent() != null ? admission.getStudent().getStudentId() : null;
+    String courseName = admission.getCourse() != null ? admission.getCourse().getName() : null;
     return ResponseEntity.ok(Map.of(
         "exists", true,
         "admissionId", admission.getAdmissionId(),
+        "courseId", courseId,
+        "courseName", courseName,
         "studentId", studentId,
         "studentName", studentName,
         "mobile", mobile.trim()
@@ -72,6 +77,11 @@ public class Admission2Controller {
         admissionService.updateOfficeDetails(id, req.getLastCollege(), req.getCollegeAttended(),
             req.getCollegeLocation(), req.getRemarks(), req.getExamDueDate(), req.getDateOfAdmission())
     );
+  }
+
+  @PostMapping("/{id}/reopen-cancellation")
+  public ResponseEntity<Admission2> reopenCancellation(@PathVariable Long id) {
+    return ResponseEntity.ok(cancellationService.reopenCancellation(id));
   }
 
   @PostMapping("/{id}/documents")
@@ -310,6 +320,9 @@ public class Admission2Controller {
       return null;
     }
     DocumentType docType = entry.getDocType();
+    String normalizedAction = normalizeDocumentReturnAction(entry.getActionType());
+    String returnedTo = resolveDocumentReturnTarget(normalizedAction);
+    String receivedBackFrom = resolveDocumentReceiveBackFrom(entry, returnedTo);
     return AdmissionDocumentReturnDto.builder()
         .returnId(entry.getReturnId())
         .admissionId(entry.getAdmission() != null ? entry.getAdmission().getAdmissionId() : null)
@@ -318,12 +331,65 @@ public class Admission2Controller {
         .returnedOn(entry.getReturnedOn())
         .reason(entry.getReason())
         .returnedBy(entry.getReturnedBy())
-        .actionType(entry.getActionType())
+        .documentHandler(entry.getDocumentHandler())
+        .actionType(normalizedAction)
+        .statusLabel(resolveDocumentReturnStatus(entry, normalizedAction, returnedTo, receivedBackFrom))
+        .returnedTo(returnedTo)
+        .receivedBackFrom(receivedBackFrom)
         .resubmittedOn(entry.getResubmittedOn())
         .resubmittedTo(entry.getResubmittedTo())
         .resubmissionReason(entry.getResubmissionReason())
         .resubmittedBy(entry.getResubmittedBy())
         .build();
+  }
+
+  private String normalizeDocumentReturnAction(String actionType) {
+    if (actionType == null || actionType.isBlank()) {
+      return "RETURNED_TO_STUDENT";
+    }
+    String normalized = actionType.trim().toUpperCase();
+    return switch (normalized) {
+      case "RETURNED_TO_BRANCH" -> "RETURNED_TO_BRANCH";
+      case "RETURNED_TO_STUDENT", "RETURNED", "RESUBMITTED" -> "RETURNED_TO_STUDENT";
+      default -> "RETURNED_TO_STUDENT";
+    };
+  }
+
+  private String resolveDocumentReturnTarget(String normalizedAction) {
+    return "RETURNED_TO_BRANCH".equals(normalizedAction) ? "Branch" : "Student";
+  }
+
+  private String resolveDocumentReceiveBackFrom(AdmissionDocumentReturn entry, String returnedTo) {
+    if (entry == null) {
+      return null;
+    }
+    if (entry.getResubmittedOn() == null) {
+      return null;
+    }
+    String value = entry.getResubmittedTo();
+    if (value == null || value.isBlank()) {
+      return returnedTo;
+    }
+    String normalized = value.trim().toUpperCase();
+    if ("STUDENT".equals(normalized)) {
+      return "Student";
+    }
+    if ("BRANCH".equals(normalized)) {
+      return "Branch";
+    }
+    return returnedTo;
+  }
+
+  private String resolveDocumentReturnStatus(
+      AdmissionDocumentReturn entry,
+      String normalizedAction,
+      String returnedTo,
+      String receivedBackFrom
+  ) {
+    if (entry != null && entry.getResubmittedOn() != null) {
+      return "Received back from " + receivedBackFrom;
+    }
+    return "Returned to " + returnedTo.toLowerCase();
   }
 
   private StudentAdditionalQualificationDto toDto(StudentAdditionalQualification entry) {

@@ -31,47 +31,45 @@ public class HscDetailsService {
             return existing;
         }
 
+        boolean hasAnyValue = StringUtils.hasText(input.getCollegeName())
+                || StringUtils.hasText(input.getSubjects())
+                || StringUtils.hasText(input.getBoard())
+                || StringUtils.hasText(input.getRegistrationNumber())
+                || input.getPassingYear() != null
+                || input.getPhysicsMarks() != null
+                || input.getChemistryMarks() != null
+                || input.getBiologyMarks() != null
+                || input.getPcbPercentage() != null
+                || input.getPercentage() != null;
+
         if (existing != null) {
-            // ✅ UPDATE CASE
-            if (StringUtils.hasText(input.getCollegeName())) {
-                existing.setCollegeName(input.getCollegeName());
-            }
-            if (StringUtils.hasText(input.getSubjects())) {
-                existing.setSubjects(input.getSubjects());
-            }
-            if (StringUtils.hasText(input.getBoard())) {
-                existing.setBoard(input.getBoard());
-            }
-            if (StringUtils.hasText(input.getRegistrationNumber())) {
-                existing.setRegistrationNumber(input.getRegistrationNumber());
-            }
-            if (input.getPassingYear() != null) {
-                existing.setPassingYear(input.getPassingYear());
-            }
-            if (input.getPhysicsMarks() != null) {
-                existing.setPhysicsMarks(input.getPhysicsMarks());
-            }
-            if (input.getChemistryMarks() != null) {
-                existing.setChemistryMarks(input.getChemistryMarks());
-            }
-            if (input.getBiologyMarks() != null) {
-                existing.setBiologyMarks(input.getBiologyMarks());
-            }
-            if (input.getPcbPercentage() != null) {
-                existing.setPcbPercentage(input.getPcbPercentage());
-            }
-            if (input.getPercentage() != null) {
-                existing.setPercentage(input.getPercentage());
-            }
+            existing.setCollegeName(StringUtils.hasText(input.getCollegeName()) ? input.getCollegeName().trim() : null);
+            existing.setSubjects(StringUtils.hasText(input.getSubjects()) ? input.getSubjects().trim() : null);
+            existing.setBoard(StringUtils.hasText(input.getBoard()) ? input.getBoard().trim() : null);
+            existing.setRegistrationNumber(StringUtils.hasText(input.getRegistrationNumber())
+                    ? input.getRegistrationNumber().trim()
+                    : null);
+            existing.setPassingYear(input.getPassingYear());
+            existing.setPhysicsMarks(input.getPhysicsMarks());
+            existing.setChemistryMarks(input.getChemistryMarks());
+            existing.setBiologyMarks(input.getBiologyMarks());
+            existing.setPcbPercentage(input.getPcbPercentage());
+            existing.setPercentage(input.getPercentage());
 
             return hscRepository.save(existing);
         }
 
+        if (!hasAnyValue) {
+            return null;
+        }
+
         HscDetails newHsc = new HscDetails();
-        newHsc.setCollegeName(input.getCollegeName());
-        newHsc.setSubjects(input.getSubjects());
-        newHsc.setBoard(input.getBoard());
-        newHsc.setRegistrationNumber(input.getRegistrationNumber());
+        newHsc.setCollegeName(StringUtils.hasText(input.getCollegeName()) ? input.getCollegeName().trim() : null);
+        newHsc.setSubjects(StringUtils.hasText(input.getSubjects()) ? input.getSubjects().trim() : null);
+        newHsc.setBoard(StringUtils.hasText(input.getBoard()) ? input.getBoard().trim() : null);
+        newHsc.setRegistrationNumber(StringUtils.hasText(input.getRegistrationNumber())
+                ? input.getRegistrationNumber().trim()
+                : null);
         newHsc.setPassingYear(input.getPassingYear());
         newHsc.setPhysicsMarks(input.getPhysicsMarks());
         newHsc.setChemistryMarks(input.getChemistryMarks());

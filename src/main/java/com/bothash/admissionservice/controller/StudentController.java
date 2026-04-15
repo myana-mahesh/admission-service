@@ -53,23 +53,27 @@ public class StudentController {
   @PostMapping
   public ResponseEntity<Student> createOrUpdate(@RequestBody CreateStudentRequest req) {
 
-      // Check if the student already exists using absId or mobile
-      Student existingStudent = studentService.getPhoneNumber(req.getAbsId(), req.getMobile());
-
-      if(existingStudent==null) {
-    	  try {
-    		  Optional<Student> existingStudentOpt = studentService.getById(req.getStudendId());
-    	    	 if(existingStudentOpt.isPresent()) {
-    	    		 existingStudent = existingStudentOpt.get();
-    	    	 }
-		} catch (Exception e) {
-			
-		}
-    	 
-      }
       Course course = null;
       if (req.getCourseCode() != null) {
           course = courseRepo.findById(req.getCourseCode()).orElse(null);
+      }
+
+      Student existingStudent = null;
+      try {
+          if (req.getStudendId() != null) {
+              existingStudent = studentService.getById(req.getStudendId()).orElse(null);
+          } else if (StringUtils.hasText(req.getMobile()) && course != null) {
+              Admission2 existingAdmission = admission2Repository
+                      .findFirstByStudent_MobileAndCourse_CourseIdOrderByCreatedAtDesc(
+                              req.getMobile().trim(),
+                              course.getCourseId()
+                      );
+              if (existingAdmission != null) {
+                  existingStudent = existingAdmission.getStudent();
+              }
+          }
+      } catch (Exception e) {
+          // Let create flow continue rather than incorrectly overriding another course's student.
       }
 
       String registrationNumber = StringUtils.hasText(req.getRegistrationNumber())

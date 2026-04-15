@@ -80,10 +80,20 @@
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-oauth2-jose</artifactId>
         </dependency>
-        <dependency>
-		    <groupId>com.github.librepdf</groupId>
+		<dependency>
+			<groupId>com.github.librepdf</groupId>
 		    <artifactId>openpdf</artifactId>
 		    <version>1.3.32</version> <!-- or latest stable -->
+		</dependency>
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>s3</artifactId>
+			<version>2.31.61</version>
+		</dependency>
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>url-connection-client</artifactId>
+			<version>2.31.61</version>
 		</dependency>
 
         

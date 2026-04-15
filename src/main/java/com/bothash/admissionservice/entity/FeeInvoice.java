@@ -39,6 +39,12 @@ public class FeeInvoice {
     @Column(name = "amount", precision = 10, scale = 2)
     private BigDecimal amount;
 
+    @Column(name = "invoice_format", length = 64)
+    private String invoiceFormat;
+
+    @Column(name = "is_receipt_date_synced")
+    private Boolean receiptDateSynced;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt;

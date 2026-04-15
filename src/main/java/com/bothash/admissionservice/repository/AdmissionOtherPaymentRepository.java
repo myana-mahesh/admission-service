@@ -8,5 +8,5 @@ import java.util.List;
 public interface AdmissionOtherPaymentRepository extends JpaRepository<AdmissionOtherPayment, Long> {
     List<AdmissionOtherPayment> findByAdmissionAdmissionIdOrderByPaidOnDescPaymentIdDesc(Long admissionId);
     List<AdmissionOtherPayment> findByReferencePaymentPaymentId(Long referencePaymentId);
+    List<AdmissionOtherPayment> findByAdmissionAdmissionId(Long admissionId);
 }
-

@@ -1,5 +1,8 @@
 package com.bothash.admissionservice.controller;
 
+import com.bothash.admissionservice.dto.FeePaymentGroupDto;
+import com.bothash.admissionservice.dto.FeeInvoiceDto;
+import com.bothash.admissionservice.dto.PartialPaymentRequest;
 import com.bothash.admissionservice.entity.FeeInstallment;
 import com.bothash.admissionservice.entity.FeeInstallmentPayment;
 import com.bothash.admissionservice.entity.FeeInvoice;
@@ -8,6 +11,7 @@ import com.bothash.admissionservice.repository.FeeInvoiceRepository;
 import com.bothash.admissionservice.repository.FeeInstallmentPaymentRepository;
 import com.bothash.admissionservice.repository.FileUploadRepository;
 import com.bothash.admissionservice.service.impl.FeeInstallmentServiceImpl;
+import com.bothash.admissionservice.service.impl.InvoiceServiceImpl;
 
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -48,6 +52,7 @@ public class FeeInstallmentInvoiceController {
         private Long paymentId;
         private String paymentMode;
         private String txnRef;
+        private String remarks;
         private String receivedBy;
         private String status;
         private Boolean verified;
@@ -61,6 +66,19 @@ public class FeeInstallmentInvoiceController {
         private String receiptName;
         private String invoiceNumber;
         private String invoiceUrl;
+    }
+
+    @Data
+    public static class PaymentUpdateRequest {
+        private java.math.BigDecimal amount;
+        private String txnRef;
+        private String receivedBy;
+        private java.time.LocalDate paidOn;
+    }
+
+    @GetMapping("/admissions/{admissionId}/payment-groups")
+    public ResponseEntity<List<FeePaymentGroupDto>> listPaymentGroups(@PathVariable Long admissionId) {
+        return ResponseEntity.ok(feeInstallmentService.listPaymentGroups(admissionId));
     }
 
     @PostMapping("/{installmentId}/status")
@@ -111,6 +129,7 @@ public class FeeInstallmentInvoiceController {
                 ));
         Map<Long, FeeInvoice> invoiceMap = invoiceRepo.findByPayment_PaymentIdIn(paymentIds).stream()
                 .filter(inv -> inv.getPayment() != null)
+                .filter(inv -> !InvoiceServiceImpl.isPaymentGroupInvoiceNumber(inv.getInvoiceNumber()))
                 .collect(Collectors.toMap(
                         inv -> inv.getPayment().getPaymentId(),
                         Function.identity(),
@@ -124,6 +143,7 @@ public class FeeInstallmentInvoiceController {
             resp.setAmount(payment.getAmount());
             resp.setPaymentMode(payment.getPaymentMode() != null ? payment.getPaymentMode().getLabel() : null);
             resp.setTxnRef(payment.getTxnRef());
+            resp.setRemarks(payment.getRemarks());
             resp.setReceivedBy(payment.getReceivedBy());
             resp.setStatus(payment.getStatus());
             resp.setVerified(payment.getIsVerified());
@@ -169,6 +189,12 @@ public class FeeInstallmentInvoiceController {
         return ResponseEntity.ok(resp);
     }
 
+    @GetMapping("/payment-groups/{paymentGroupId}/invoice")
+    public ResponseEntity<FeeInvoiceDto> getPaymentGroupInvoice(@PathVariable String paymentGroupId) {
+        FeeInvoice invoice = feeInstallmentService.ensurePaymentGroupInvoice(paymentGroupId);
+        return ResponseEntity.ok(toDto(invoice));
+    }
+
     @PostMapping("/payments/{paymentId}/account-head-verify")
     public ResponseEntity<PaymentResponse> verifyPaymentByAccountHead(
             @PathVariable Long paymentId,
@@ -183,5 +209,88 @@ public class FeeInstallmentInvoiceController {
         resp.setAccountHeadVerified(payment.getIsAccountHeadVerified());
         resp.setAccountHeadVerifiedAt(payment.getAccountHeadVerifiedAt());
         return ResponseEntity.ok(resp);
+    }
+
+    @PutMapping("/payments/{paymentId}")
+    public ResponseEntity<PaymentResponse> updatePayment(
+            @PathVariable Long paymentId,
+            @RequestBody PaymentUpdateRequest req
+    ) {
+        FeeInstallmentPayment payment = feeInstallmentService.updatePayment(
+                paymentId,
+                req != null ? req.getAmount() : null,
+                req != null ? req.getTxnRef() : null,
+                req != null ? req.getReceivedBy() : null,
+                req != null ? req.getPaidOn() : null
+        );
+        PaymentResponse resp = new PaymentResponse();
+        resp.setPaymentId(payment.getPaymentId());
+        resp.setAmount(payment.getAmount());
+        resp.setTxnRef(payment.getTxnRef());
+        resp.setReceivedBy(payment.getReceivedBy());
+        resp.setStatus(payment.getStatus());
+        resp.setPaidOn(payment.getPaidOn());
+        resp.setVerified(payment.getIsVerified());
+        resp.setVerifiedBy(payment.getVerifiedBy());
+        resp.setVerifiedAt(payment.getVerifiedAt());
+        resp.setAccountHeadVerified(payment.getIsAccountHeadVerified());
+        resp.setAccountHeadVerifiedAt(payment.getAccountHeadVerifiedAt());
+        return ResponseEntity.ok(resp);
+    }
+
+    @PutMapping("/payment-groups/{paymentGroupId}")
+    public ResponseEntity<FeePaymentGroupDto> updatePaymentGroup(
+            @PathVariable String paymentGroupId,
+            @RequestParam(required = false) String role,
+            @RequestBody PartialPaymentRequest req
+    ) {
+        return ResponseEntity.ok(feeInstallmentService.updatePaymentGroup(paymentGroupId, req, role));
+    }
+
+    @PostMapping("/payment-groups/{paymentGroupId}/verify")
+    public ResponseEntity<FeePaymentGroupDto> verifyPaymentGroup(
+            @PathVariable String paymentGroupId,
+            @RequestParam(required = false) String actor
+    ) {
+        return ResponseEntity.ok(feeInstallmentService.verifyPaymentGroup(paymentGroupId, actor));
+    }
+
+    @PostMapping("/payment-groups/{paymentGroupId}/account-head-verify")
+    public ResponseEntity<FeePaymentGroupDto> verifyPaymentGroupByAccountHead(
+            @PathVariable String paymentGroupId,
+            @RequestParam(required = false) String actor
+    ) {
+        return ResponseEntity.ok(feeInstallmentService.verifyPaymentGroupByAccountHead(paymentGroupId, actor));
+    }
+
+    @DeleteMapping("/payments/{paymentId}")
+    public ResponseEntity<Void> deletePayment(
+            @PathVariable Long paymentId,
+            @RequestParam(defaultValue = "true") boolean deleteFilesAlso
+    ) {
+        feeInstallmentService.deletePayment(paymentId, deleteFilesAlso);
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping("/payment-groups/{paymentGroupId}")
+    public ResponseEntity<Void> deletePaymentGroup(
+            @PathVariable String paymentGroupId,
+            @RequestParam(defaultValue = "true") boolean deleteFilesAlso
+    ) {
+        feeInstallmentService.deletePaymentGroup(paymentGroupId, deleteFilesAlso);
+        return ResponseEntity.ok().build();
+    }
+
+    private FeeInvoiceDto toDto(FeeInvoice inv) {
+        FeeInvoiceDto dto = new FeeInvoiceDto();
+        dto.setInvoiceId(inv.getId());
+        dto.setInvoiceNumber(inv.getInvoiceNumber());
+        dto.setAmount(inv.getAmount());
+        dto.setCreatedAt(inv.getCreatedAt());
+        if (inv.getInstallment() != null) {
+            dto.setInstallmentId(inv.getInstallment().getInstallmentId());
+        }
+        dto.setDownloadUrl(inv.getDownloadUrl());
+        return dto;
     }
 }

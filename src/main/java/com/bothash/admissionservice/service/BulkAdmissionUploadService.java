@@ -2004,7 +2004,8 @@ public class BulkAdmissionUploadService {
         if (payment.getAmount() == null || payment.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        if (feeInvoiceRepository.existsByPayment_PaymentId(payment.getPaymentId())) {
+        if (feeInvoiceRepository.findByPayment_PaymentId(payment.getPaymentId()).stream()
+                .anyMatch(invoice -> !InvoiceServiceImpl.isPaymentGroupInvoiceNumber(invoice.getInvoiceNumber()))) {
             return;
         }
         invoiceService.generateInvoiceForPayment(admission, installment, payment);

@@ -72,5 +72,13 @@ public class AdmissionOtherPayment extends Auditable {
 
     @Column(length = 64)
     private String receiptSha256;
-}
 
+    @Column(length = 120)
+    private String invoiceNumber;
+
+    @Column(length = 600)
+    private String invoiceFilePath;
+
+    @Column(length = 600)
+    private String invoiceDownloadUrl;
+}

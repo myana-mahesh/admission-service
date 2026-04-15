@@ -18,5 +18,6 @@ public class AdmissionDocumentReturnRequest {
     private LocalDate returnedOn;
     private String reason;
     private String returnedBy;
+    private String documentHandler;
     private String actionType;
 }
