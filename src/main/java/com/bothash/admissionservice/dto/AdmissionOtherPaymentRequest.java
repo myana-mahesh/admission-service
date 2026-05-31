@@ -11,6 +11,7 @@ import java.time.LocalDate;
 public class AdmissionOtherPaymentRequest {
     private BigDecimal amount;
     private String mode;
+    private String paymentType;
     private String txnRef;
     private String category;
     private String remarks;
@@ -18,4 +19,3 @@ public class AdmissionOtherPaymentRequest {
     private LocalDate paidOn;
     private UploadRequest receipt;
 }
-

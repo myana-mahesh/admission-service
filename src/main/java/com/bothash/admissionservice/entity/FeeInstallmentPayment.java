@@ -12,6 +12,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -49,6 +50,30 @@ public class FeeInstallmentPayment extends Auditable {
     @Column(name = "payment_group_id", length = 36)
     private String paymentGroupId;
 
+    /**
+     * Null = not yet remitted, still available for selection on the branch
+     * collections dashboard. When stamped, points at the
+     * {@code branch_cashbook_remittance} row this payment was sent with.
+     */
+    @Column(name = "remittance_id")
+    private Long remittanceId;
+
+    /**
+     * Running total consumed by branch expenses and petty topups (positive)
+     * minus restorations from petty returns (negative). Denormalized cache of
+     * {@code sum(fee_payment_allocation.amount)} for this payment. The fee's
+     * still-available amount is {@code amount - consumedAmount}.
+     */
+    @Column(name = "consumed_amount", nullable = false, precision = 12, scale = 2)
+    private BigDecimal consumedAmount = BigDecimal.ZERO;
+
+    @PrePersist
+    void defaultConsumedAmount() {
+        if (consumedAmount == null) {
+            consumedAmount = BigDecimal.ZERO;
+        }
+    }
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "payment_mode_id")
     private PaymentModeMaster paymentMode;
@@ -61,6 +86,9 @@ public class FeeInstallmentPayment extends Auditable {
 
     @Column(length = 120)
     private String receivedBy;
+
+    @Column(name = "payment_type", length = 20)
+    private String paymentType;
 
     @Column(length = 40)
     private String status;
@@ -77,6 +105,24 @@ public class FeeInstallmentPayment extends Auditable {
 
     @Column(name = "account_head_verified_at")
     private java.time.LocalDateTime accountHeadVerifiedAt;
+
+    @Column(name = "rejection_reason", length = 500)
+    private String rejectionReason;
+
+    @Column(name = "rejected_by", length = 120)
+    private String rejectedBy;
+
+    @Column(name = "rejected_at")
+    private java.time.LocalDateTime rejectedAt;
+
+    @Column(name = "account_head_rejection_reason", length = 500)
+    private String accountHeadRejectionReason;
+
+    @Column(name = "account_head_rejected_by", length = 120)
+    private String accountHeadRejectedBy;
+
+    @Column(name = "account_head_rejected_at")
+    private java.time.LocalDateTime accountHeadRejectedAt;
 
     private LocalDate paidOn;
 }

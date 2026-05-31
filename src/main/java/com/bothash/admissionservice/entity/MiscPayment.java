@@ -36,16 +36,16 @@ public class MiscPayment extends Auditable {
     @Column(name = "student_name", length = 160, nullable = false)
     private String studentName;
 
-    @Column(name = "contact_number", length = 16, nullable = false)
+    @Column(name = "contact_number", length = 16)
     private String contactNumber;
 
-    @Column(name = "batch", length = 64, nullable = false)
+    @Column(name = "batch", length = 64)
     private String batch;
 
     @Column(name = "course_id")
     private Long courseId;
 
-    @Column(name = "course_name", length = 160, nullable = false)
+    @Column(name = "course_name", length = 160)
     private String courseName;
 
     @Column(name = "college_name", length = 160)
@@ -59,6 +59,9 @@ public class MiscPayment extends Auditable {
 
     @Column(name = "payment_mode", length = 32, nullable = false)
     private String paymentMode;
+
+    @Column(name = "payment_type", length = 20)
+    private String paymentType;
 
     @Column(name = "payment_date", nullable = false)
     private LocalDate paymentDate;

@@ -25,6 +25,7 @@ public class MiscPaymentRequest {
     private BigDecimal amount;
 
     private String paymentMode;
+    private String paymentType;
 
     private LocalDate paymentDate;
 

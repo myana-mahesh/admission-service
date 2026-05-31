@@ -25,14 +25,19 @@ public class FeePaymentGroupDto {
     private LocalDate paidOn;
     private BigDecimal totalAmount;
     private String paymentMode;
+    private String paymentType;
     private String txnRef;
     private String remarks;
     private String receivedBy;
     private String status;
     private Boolean verified;
     private Boolean accountHeadVerified;
+    private Boolean accountHeadRejected;
+    private String rejectionReason;
+    private String accountHeadRejectionReason;
     private String receiptUrl;
     private String receiptName;
+    private List<ReceiptLinkDto> receipts;
     private Integer allocationCount;
     private String invoiceNumber;
     private String invoiceUrl;
@@ -42,5 +47,11 @@ public class FeePaymentGroupDto {
     public static class InvoiceLinkDto {
         private String invoiceNumber;
         private String invoiceUrl;
+    }
+
+    @Data
+    public static class ReceiptLinkDto {
+        private String name;
+        private String url;
     }
 }

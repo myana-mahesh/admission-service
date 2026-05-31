@@ -48,6 +48,7 @@ public class FeeLedgerController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String dueStatus,
             @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String paymentType,
             @RequestParam(required = false) String verification,
             @RequestParam(required = false) String proofAttached,
             @RequestParam(required = false) String txnPresent,
@@ -62,6 +63,7 @@ public class FeeLedgerController {
 
         List<String> statusList = splitCsv(status);
         List<String> paymentModes = splitCsv(paymentMode);
+        List<String> paymentTypes = splitCsv(paymentType);
         List<Long> branchIdList = splitLongCsv(branchIds);
         if (branchId != null) {
             branchIdList = List.of(branchId);
@@ -78,13 +80,49 @@ public class FeeLedgerController {
         FeeLedgerResponseDto response = feeLedgerService.search(
                 q, branchIdList, courseIdList, batch, batchCodeList, academicYearId,
                 startDate, endDate, dateType,
-                statusList, dueStatus, paymentModes,
+                statusList, dueStatus, paymentModes, paymentTypes,
                 verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount,
                 pendingMin, pendingMax, branchApprovedOnly, pageable
         );
 
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/ledger/other-payments")
+    public ResponseEntity<java.util.List<com.bothash.admissionservice.dto.LedgerOtherPaymentRowDto>> otherPaymentLedger(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Long branchId,
+            @RequestParam(required = false) String branchIds,
+            @RequestParam(required = false) Long courseId,
+            @RequestParam(required = false) String courseIds,
+            @RequestParam(required = false) String batch,
+            @RequestParam(required = false) String batchCodes,
+            @RequestParam(required = false) Long academicYearId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String paymentType,
+            @RequestParam(required = false) Boolean branchApprovedOnly
+    ) {
+        List<String> paymentModes = splitCsv(paymentMode);
+        List<String> paymentTypes = splitCsv(paymentType);
+        List<Long> branchIdList = splitLongCsv(branchIds);
+        if (branchId != null) {
+            branchIdList = List.of(branchId);
+        }
+        List<Long> courseIdList = splitLongCsv(courseIds);
+        if (courseId != null) {
+            courseIdList = List.of(courseId);
+        }
+        List<String> batchCodeList = splitCsv(batchCodes);
+        if (batch != null && !batch.isBlank()) {
+            batchCodeList = List.of();
+        }
+        return ResponseEntity.ok(feeLedgerService.searchOtherPayments(
+                q, branchIdList, courseIdList, batch, batchCodeList, academicYearId,
+                startDate, endDate, paymentModes, paymentTypes, branchApprovedOnly
+        ));
     }
 
     @GetMapping("/ledger/payments")
@@ -105,6 +143,7 @@ public class FeeLedgerController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String dueStatus,
             @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String paymentType,
             @RequestParam(required = false) String verification,
             @RequestParam(required = false) String proofAttached,
             @RequestParam(required = false) String txnPresent,
@@ -119,6 +158,7 @@ public class FeeLedgerController {
 
         List<String> statusList = splitCsv(status);
         List<String> paymentModes = splitCsv(paymentMode);
+        List<String> paymentTypes = splitCsv(paymentType);
         List<Long> branchIdList = splitLongCsv(branchIds);
         if (branchId != null) {
             branchIdList = List.of(branchId);
@@ -135,7 +175,7 @@ public class FeeLedgerController {
         FeeLedgerPaymentResponseDto response = feeLedgerService.searchPayments(
                 q, branchIdList, courseIdList, batch, batchCodeList, academicYearId,
                 startDate, endDate, dateType,
-                statusList, dueStatus, paymentModes,
+                statusList, dueStatus, paymentModes, paymentTypes,
                 verification, proofAttached, txnPresent,
                 paidAmountOp, paidAmount,
                 pendingMin, pendingMax, branchApprovedOnly, pageable

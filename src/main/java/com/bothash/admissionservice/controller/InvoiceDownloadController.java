@@ -40,7 +40,7 @@ public class InvoiceDownloadController {
             @PathVariable Long admissionId,
             @PathVariable String fileName) {
 
-        FeeInvoice invoice = invoiceRepo.findAll().stream()
+        FeeInvoice invoice = invoiceRepo.findByInstallment_Admission_AdmissionId(admissionId).stream()
                 .filter(inv -> inv.getFilePath().endsWith(File.separator + fileName))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Invoice not found"));
@@ -55,7 +55,7 @@ public class InvoiceDownloadController {
         FileSystemResource resource = new FileSystemResource(file);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentDisposition(
-                ContentDisposition.attachment().filename(fileName).build());
+                ContentDisposition.attachment().filename(invoiceService.buildDownloadFileName(invoice)).build());
         headers.setContentType(MediaType.APPLICATION_PDF);
 
         return new ResponseEntity<>(resource, headers, HttpStatus.OK);
@@ -161,8 +161,14 @@ public class InvoiceDownloadController {
         if (!StringUtils.hasText(key) || !r2InvoiceStorageService.exists(key)) {
             return ResponseEntity.notFound().build();
         }
+        String downloadFileName = invoiceRepo.findAll().stream()
+                .filter(invoice -> key.equals(r2InvoiceStorageService.extractKey(invoice.getFilePath()))
+                        || key.equals(r2InvoiceStorageService.extractKey(invoice.getDownloadUrl())))
+                .findFirst()
+                .map(invoiceService::buildDownloadFileName)
+                .orElse("invoice.pdf");
         return ResponseEntity.status(HttpStatus.FOUND)
-                .header(HttpHeaders.LOCATION, r2InvoiceStorageService.presignGet(key).toString())
+                .header(HttpHeaders.LOCATION, r2InvoiceStorageService.presignGet(key, downloadFileName).toString())
                 .build();
     }
     

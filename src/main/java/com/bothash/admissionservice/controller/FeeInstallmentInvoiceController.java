@@ -51,21 +51,32 @@ public class FeeInstallmentInvoiceController {
     public static class PaymentResponse {
         private Long paymentId;
         private String paymentMode;
+        private String paymentType;
         private String txnRef;
         private String remarks;
         private String receivedBy;
         private String status;
+        private String rejectionReason;
         private Boolean verified;
         private String verifiedBy;
         private java.time.LocalDateTime verifiedAt;
         private Boolean accountHeadVerified;
+        private Boolean accountHeadRejected;
+        private String accountHeadRejectionReason;
         private java.time.LocalDateTime accountHeadVerifiedAt;
         private java.time.LocalDate paidOn;
         private java.math.BigDecimal amount;
         private String receiptUrl;
         private String receiptName;
+        private java.util.List<ReceiptLink> receipts;
         private String invoiceNumber;
         private String invoiceUrl;
+    }
+
+    @Data
+    public static class ReceiptLink {
+        private String name;
+        private String url;
     }
 
     @Data
@@ -74,6 +85,11 @@ public class FeeInstallmentInvoiceController {
         private String txnRef;
         private String receivedBy;
         private java.time.LocalDate paidOn;
+    }
+
+    @Data
+    public static class PaymentRejectRequest {
+        private String reason;
     }
 
     @GetMapping("/admissions/{admissionId}/payment-groups")
@@ -120,13 +136,9 @@ public class FeeInstallmentInvoiceController {
                 .map(FeeInstallmentPayment::getPaymentId)
                 .toList();
         List<FileUpload> uploads = uploadRepo.findByInstallmentPayment_PaymentIdIn(paymentIds);
-        Map<Long, FileUpload> uploadMap = uploads.stream()
+        Map<Long, java.util.List<FileUpload>> uploadsByPayment = uploads.stream()
                 .filter(u -> u.getInstallmentPayment() != null)
-                .collect(Collectors.toMap(
-                        u -> u.getInstallmentPayment().getPaymentId(),
-                        Function.identity(),
-                        (a, b) -> a
-                ));
+                .collect(Collectors.groupingBy(u -> u.getInstallmentPayment().getPaymentId()));
         Map<Long, FeeInvoice> invoiceMap = invoiceRepo.findByPayment_PaymentIdIn(paymentIds).stream()
                 .filter(inv -> inv.getPayment() != null)
                 .filter(inv -> !InvoiceServiceImpl.isPaymentGroupInvoiceNumber(inv.getInvoiceNumber()))
@@ -142,20 +154,33 @@ public class FeeInstallmentInvoiceController {
             resp.setPaymentId(payment.getPaymentId());
             resp.setAmount(payment.getAmount());
             resp.setPaymentMode(payment.getPaymentMode() != null ? payment.getPaymentMode().getLabel() : null);
+            resp.setPaymentType(payment.getPaymentType());
             resp.setTxnRef(payment.getTxnRef());
             resp.setRemarks(payment.getRemarks());
             resp.setReceivedBy(payment.getReceivedBy());
             resp.setStatus(payment.getStatus());
+            resp.setRejectionReason(payment.getRejectionReason());
             resp.setVerified(payment.getIsVerified());
             resp.setVerifiedBy(payment.getVerifiedBy());
             resp.setVerifiedAt(payment.getVerifiedAt());
             resp.setAccountHeadVerified(payment.getIsAccountHeadVerified());
+            resp.setAccountHeadRejected(feeInstallmentService.isAccountHeadRejected(payment));
+            resp.setAccountHeadRejectionReason(payment.getAccountHeadRejectionReason());
             resp.setAccountHeadVerifiedAt(payment.getAccountHeadVerifiedAt());
             resp.setPaidOn(payment.getPaidOn());
-            FileUpload upload = uploadMap.get(payment.getPaymentId());
-            if (upload != null) {
-                resp.setReceiptUrl(upload.getStorageUrl());
-                resp.setReceiptName(upload.getFilename());
+            java.util.List<FileUpload> paymentUploads = uploadsByPayment.get(payment.getPaymentId());
+            if (paymentUploads != null && !paymentUploads.isEmpty()) {
+                FileUpload first = paymentUploads.get(0);
+                resp.setReceiptUrl(first.getStorageUrl());
+                resp.setReceiptName(first.getFilename());
+                java.util.List<ReceiptLink> links = new ArrayList<>();
+                for (FileUpload up : paymentUploads) {
+                    ReceiptLink link = new ReceiptLink();
+                    link.setName(up.getFilename());
+                    link.setUrl(up.getStorageUrl());
+                    links.add(link);
+                }
+                resp.setReceipts(links);
             }
             FeeInvoice invoice = invoiceMap.get(payment.getPaymentId());
             if (invoice != null) {
@@ -189,6 +214,19 @@ public class FeeInstallmentInvoiceController {
         return ResponseEntity.ok(resp);
     }
 
+    @PostMapping("/payments/{paymentId}/reject")
+    public ResponseEntity<InvoiceResponse> rejectPayment(
+            @PathVariable Long paymentId,
+            @RequestParam(required = false) String actor,
+            @RequestBody(required = false) PaymentRejectRequest request
+    ) {
+        FeeInstallment inst = feeInstallmentService.rejectPayment(paymentId, actor, request != null ? request.getReason() : null);
+        InvoiceResponse resp = new InvoiceResponse();
+        resp.setInstallmentId(inst.getInstallmentId());
+        resp.setStatus(inst.getStatus());
+        return ResponseEntity.ok(resp);
+    }
+
     @GetMapping("/payment-groups/{paymentGroupId}/invoice")
     public ResponseEntity<FeeInvoiceDto> getPaymentGroupInvoice(@PathVariable String paymentGroupId) {
         FeeInvoice invoice = feeInstallmentService.ensurePaymentGroupInvoice(paymentGroupId);
@@ -207,7 +245,30 @@ public class FeeInstallmentInvoiceController {
         resp.setVerifiedBy(payment.getVerifiedBy());
         resp.setVerifiedAt(payment.getVerifiedAt());
         resp.setAccountHeadVerified(payment.getIsAccountHeadVerified());
+        resp.setAccountHeadRejected(feeInstallmentService.isAccountHeadRejected(payment));
+        resp.setAccountHeadRejectionReason(payment.getAccountHeadRejectionReason());
         resp.setAccountHeadVerifiedAt(payment.getAccountHeadVerifiedAt());
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/payments/{paymentId}/account-head-reject")
+    public ResponseEntity<PaymentResponse> rejectPaymentByAccountHead(
+            @PathVariable Long paymentId,
+            @RequestParam(required = false) String actor,
+            @RequestBody(required = false) PaymentRejectRequest request
+    ) {
+        FeeInstallmentPayment payment = feeInstallmentService.rejectPaymentByAccountHead(paymentId, actor, request != null ? request.getReason() : null);
+        PaymentResponse resp = new PaymentResponse();
+        resp.setPaymentId(payment.getPaymentId());
+        resp.setVerified(payment.getIsVerified());
+        resp.setVerifiedBy(payment.getVerifiedBy());
+        resp.setVerifiedAt(payment.getVerifiedAt());
+        resp.setAccountHeadVerified(payment.getIsAccountHeadVerified());
+        resp.setAccountHeadRejected(feeInstallmentService.isAccountHeadRejected(payment));
+        resp.setAccountHeadRejectionReason(payment.getAccountHeadRejectionReason());
+        resp.setAccountHeadVerifiedAt(payment.getAccountHeadVerifiedAt());
+        resp.setStatus(payment.getStatus());
+        resp.setRejectionReason(payment.getRejectionReason());
         return ResponseEntity.ok(resp);
     }
 
@@ -228,12 +289,16 @@ public class FeeInstallmentInvoiceController {
         resp.setAmount(payment.getAmount());
         resp.setTxnRef(payment.getTxnRef());
         resp.setReceivedBy(payment.getReceivedBy());
+        resp.setPaymentType(payment.getPaymentType());
         resp.setStatus(payment.getStatus());
+        resp.setRejectionReason(payment.getRejectionReason());
         resp.setPaidOn(payment.getPaidOn());
         resp.setVerified(payment.getIsVerified());
         resp.setVerifiedBy(payment.getVerifiedBy());
         resp.setVerifiedAt(payment.getVerifiedAt());
         resp.setAccountHeadVerified(payment.getIsAccountHeadVerified());
+        resp.setAccountHeadRejected(feeInstallmentService.isAccountHeadRejected(payment));
+        resp.setAccountHeadRejectionReason(payment.getAccountHeadRejectionReason());
         resp.setAccountHeadVerifiedAt(payment.getAccountHeadVerifiedAt());
         return ResponseEntity.ok(resp);
     }
@@ -255,12 +320,30 @@ public class FeeInstallmentInvoiceController {
         return ResponseEntity.ok(feeInstallmentService.verifyPaymentGroup(paymentGroupId, actor));
     }
 
+    @PostMapping("/payment-groups/{paymentGroupId}/reject")
+    public ResponseEntity<FeePaymentGroupDto> rejectPaymentGroup(
+            @PathVariable String paymentGroupId,
+            @RequestParam(required = false) String actor,
+            @RequestBody(required = false) PaymentRejectRequest request
+    ) {
+        return ResponseEntity.ok(feeInstallmentService.rejectPaymentGroup(paymentGroupId, actor, request != null ? request.getReason() : null));
+    }
+
     @PostMapping("/payment-groups/{paymentGroupId}/account-head-verify")
     public ResponseEntity<FeePaymentGroupDto> verifyPaymentGroupByAccountHead(
             @PathVariable String paymentGroupId,
             @RequestParam(required = false) String actor
     ) {
         return ResponseEntity.ok(feeInstallmentService.verifyPaymentGroupByAccountHead(paymentGroupId, actor));
+    }
+
+    @PostMapping("/payment-groups/{paymentGroupId}/account-head-reject")
+    public ResponseEntity<FeePaymentGroupDto> rejectPaymentGroupByAccountHead(
+            @PathVariable String paymentGroupId,
+            @RequestParam(required = false) String actor,
+            @RequestBody(required = false) PaymentRejectRequest request
+    ) {
+        return ResponseEntity.ok(feeInstallmentService.rejectPaymentGroupByAccountHead(paymentGroupId, actor, request != null ? request.getReason() : null));
     }
 
     @DeleteMapping("/payments/{paymentId}")

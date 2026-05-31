@@ -41,9 +41,11 @@ import com.bothash.admissionservice.dto.StudentAdditionalQualificationDto;
 import com.bothash.admissionservice.enumpackage.AdmissionStatus;
 import com.bothash.admissionservice.enumpackage.CollegeVerificationStatus;
 import com.bothash.admissionservice.repository.*;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 @Transactional
 public class Admission2ServiceImpl implements Admission2Service {
 	private final Admission2Repository admissionRepo;
@@ -116,6 +118,7 @@ private final FileUploadRepository uploadRepo;
 		String prevReferenceName = null;
 		String prevAdmissionBranchName = null;
 		String prevLectureBranchName = null;
+		String prevAbsId = null;
 		CollegeVerificationStatus prevCollegeVerificationStatus = null;
 		if (isNew) {
 			a = new Admission2();
@@ -141,6 +144,7 @@ private final FileUploadRepository uploadRepo;
 			prevReferenceName = a.getReferenceName();
 			prevAdmissionBranchName = branchName(a.getAdmissionBranch());
 			prevLectureBranchName = branchName(a.getLectureBranch());
+			prevAbsId = student.getAbsId();
 			prevCollegeVerificationStatus = a.getCollegeVerificationStatus();
 		}
 		a.setStudent(student);
@@ -184,6 +188,10 @@ private final FileUploadRepository uploadRepo;
 		if (!isNew) {
 			Long newCollegeId = college != null ? college.getCollegeId() : null;
 			Long newCourseId = course != null ? course.getCourseId() : null;
+			if (!Objects.equals(previousCourseId, newCourseId)) {
+				student.setAbsId(buildAbsId(course, admissionBranch, student.getStudentId()));
+				studentRepo.save(student);
+			}
 			adjustSeatCountsForCourseChange(previousStatus, previousCollegeId, previousCourseId, newCollegeId, newCourseId);
 
 			Map<String, Object> changes = new LinkedHashMap<>();
@@ -199,6 +207,7 @@ private final FileUploadRepository uploadRepo;
 			addChange(changes, "referenceName", prevReferenceName, a.getReferenceName());
 			addChange(changes, "admissionBranch", prevAdmissionBranchName, branchName(a.getAdmissionBranch()));
 			addChange(changes, "lectureBranch", prevLectureBranchName, branchName(a.getLectureBranch()));
+			addChange(changes, "absId", prevAbsId, student.getAbsId());
 			addChange(changes, "collegeVerificationStatus", prevCollegeVerificationStatus, a.getCollegeVerificationStatus());
 			Map<String, Object> details = Map.of(
 					"admissionId", a.getAdmissionId(),
@@ -662,6 +671,7 @@ private final FileUploadRepository uploadRepo;
 		payment.setRemarks(normalizeToNull(request.getRemarks()));
 		payment.setReceivedBy(normalizeToNull(request.getReceivedBy()));
 		payment.setPaymentMode(resolvePaymentMode(request.getMode()));
+		payment.setPaymentType(normalizePaymentType(request.getPaymentType()));
 
 		UploadRequest receipt = request.getReceipt();
 		if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
@@ -727,6 +737,7 @@ private final FileUploadRepository uploadRepo;
 		payment.setRemarks(normalizeToNull(request.getRemarks()));
 		payment.setReceivedBy(normalizeToNull(request.getReceivedBy()));
 		payment.setPaymentMode(resolvePaymentMode(request.getMode()));
+		payment.setPaymentType(normalizePaymentType(request.getPaymentType()));
 
 		UploadRequest receipt = request.getReceipt();
 		if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
@@ -845,7 +856,13 @@ private final FileUploadRepository uploadRepo;
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
 		
 		
-		YearlyFees yearlyFees = this.yearlyFeesRepository.findByAdmissionAdmissionIdAndYear(admissionId,studyYear);
+		List<YearlyFees> yearlyFeeRows = this.yearlyFeesRepository.findByAdmissionAdmissionIdAndYear(admissionId, studyYear);
+		if (yearlyFeeRows.size() > 1) {
+			log.warn("Duplicate YearlyFees rows found for admissionId={} year={} count={}. Using latest row and continuing.", admissionId, studyYear, yearlyFeeRows.size());
+		}
+		YearlyFees yearlyFees = yearlyFeeRows.stream()
+				.max(java.util.Comparator.comparing(YearlyFees::getId, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+				.orElse(null);
 		
 		if(yearlyFees==null) {
 			yearlyFees = new YearlyFees();
@@ -1000,10 +1017,37 @@ private final FileUploadRepository uploadRepo;
 		if (StringUtils.hasText(request.getMode())) {
 			paymentMode = service.getByMode(request.getMode());
 		}
+		String paymentType = normalizePaymentType(request.getPaymentType());
+		if (log.isInfoEnabled()) {
+			log.info("applyPartialPayment start admissionId={} admissionBranchId={} lectureBranchId={} amount={} paidOn={} role={} paymentType={} mode={} modeCode={} txnRef={}",
+					admissionId,
+					admission.getAdmissionBranch() != null ? admission.getAdmissionBranch().getId() : null,
+					admission.getLectureBranch() != null ? admission.getLectureBranch().getId() : null,
+					request.getAmount(),
+					paidOn,
+					role,
+					paymentType,
+					request.getMode(),
+					paymentMode != null ? paymentMode.getCode() : null,
+					request.getTxnRef());
+		}
 
 		BigDecimal remaining = request.getAmount();
 		List<FeeInstallmentPayment> payments = new ArrayList<>();
 		String paymentGroupId = java.util.UUID.randomUUID().toString();
+		List<UploadRequest> partialReceipts = new ArrayList<>();
+		if (request.getReceipts() != null) {
+			for (UploadRequest r : request.getReceipts()) {
+				if (r != null && StringUtils.hasText(r.getStorageUrl())) {
+					partialReceipts.add(r);
+				}
+			}
+		}
+		if (partialReceipts.isEmpty() && request.getReceipt() != null
+				&& StringUtils.hasText(request.getReceipt().getStorageUrl())) {
+			partialReceipts.add(request.getReceipt());
+		}
+		boolean partialReceiptsAttached = false;
 		if (remaining.compareTo(BigDecimal.ZERO) > 0) {
 			for (FeeInstallment installment : installments) {
 				if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
@@ -1036,6 +1080,7 @@ private final FileUploadRepository uploadRepo;
 						.amount(applied)
 						.paymentGroupId(paymentGroupId)
 						.paymentMode(paymentMode)
+						.paymentType(paymentType)
 						.txnRef(request.getTxnRef())
 						.remarks(request.getRemarks())
 						.receivedBy(request.getReceivedBy())
@@ -1046,6 +1091,17 @@ private final FileUploadRepository uploadRepo;
 						.paidOn(paidOn)
 						.build();
 				payment = paymentRepo.save(payment);
+				log.info("applyPartialPayment saved paymentId={} admissionId={} installmentId={} amount={} paymentType={} modeCode={} status={} paidOn={} createdAt={} groupId={}",
+						payment.getPaymentId(),
+						admissionId,
+						installment.getInstallmentId(),
+						payment.getAmount(),
+						payment.getPaymentType(),
+						payment.getPaymentMode() != null ? payment.getPaymentMode().getCode() : null,
+						payment.getStatus(),
+						payment.getPaidOn(),
+						payment.getCreatedAt(),
+						payment.getPaymentGroupId());
 				payments.add(payment);
 
 				if (payment.getAmount() != null
@@ -1054,10 +1110,12 @@ private final FileUploadRepository uploadRepo;
 					invoiceService.generateInvoiceForPayment(admission, installment, payment);
 				}
 
-				UploadRequest receipt = request.getReceipt();
-				if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
-					FileUpload upload = buildPaymentReceiptUpload(admission, installment, payment, receipt);
-					uploadRepo.save(upload);
+				if (!partialReceiptsAttached) {
+					for (UploadRequest receipt : partialReceipts) {
+						FileUpload upload = buildPaymentReceiptUpload(admission, installment, payment, receipt);
+						uploadRepo.save(upload);
+					}
+					partialReceiptsAttached = true;
 				}
 
 				remaining = remaining.subtract(applied);
@@ -1141,6 +1199,7 @@ private final FileUploadRepository uploadRepo;
 					.amount(applied.negate())
 					.paymentGroupId(paymentGroupId)
 					.paymentMode(paymentMode)
+					.paymentType(paymentType)
 					.txnRef(request.getTxnRef())
 					.remarks(request.getRemarks())
 					.receivedBy(request.getReceivedBy())
@@ -1151,12 +1210,25 @@ private final FileUploadRepository uploadRepo;
 					.paidOn(paidOn)
 					.build();
 			payment = paymentRepo.save(payment);
+			log.info("applyPartialPayment saved reversal paymentId={} admissionId={} installmentId={} amount={} paymentType={} modeCode={} status={} paidOn={} createdAt={} groupId={}",
+					payment.getPaymentId(),
+					admissionId,
+					installment.getInstallmentId(),
+					payment.getAmount(),
+					payment.getPaymentType(),
+					payment.getPaymentMode() != null ? payment.getPaymentMode().getCode() : null,
+					payment.getStatus(),
+					payment.getPaidOn(),
+					payment.getCreatedAt(),
+					payment.getPaymentGroupId());
 			payments.add(payment);
 
-			UploadRequest receipt = request.getReceipt();
-			if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
-				FileUpload upload = buildPaymentReceiptUpload(admission, installment, payment, receipt);
-				uploadRepo.save(upload);
+			if (!partialReceiptsAttached) {
+				for (UploadRequest receipt : partialReceipts) {
+					FileUpload upload = buildPaymentReceiptUpload(admission, installment, payment, receipt);
+					uploadRepo.save(upload);
+				}
+				partialReceiptsAttached = true;
 			}
 
 			reversalRemaining = reversalRemaining.subtract(applied);
@@ -1244,6 +1316,7 @@ private final FileUploadRepository uploadRepo;
 				.netAmount(amount.subtract(returnedAmount))
 				.paidOn(payment.getPaidOn())
 				.paymentMode(payment.getPaymentMode() != null ? payment.getPaymentMode().getCode() : null)
+				.paymentType(payment.getPaymentType())
 				.txnRef(payment.getTxnRef())
 				.category(payment.getCategory())
 				.remarks(payment.getRemarks())
@@ -1281,6 +1354,19 @@ private final FileUploadRepository uploadRepo;
 				.active(true)
 				.build();
 		return service.save(created);
+	}
+
+	private String normalizePaymentType(String paymentType) {
+		if (!StringUtils.hasText(paymentType)) {
+			throw new IllegalArgumentException("Payment type is required. Allowed values: Cash, Cheque, Online.");
+		}
+		String normalized = paymentType.trim().toLowerCase(Locale.ENGLISH);
+		return switch (normalized) {
+			case "cash" -> "Cash";
+			case "cheque", "check" -> "Cheque";
+			case "online" -> "Online";
+			default -> throw new IllegalArgumentException("Invalid payment type. Allowed values: Cash, Cheque, Online.");
+		};
 	}
 
 

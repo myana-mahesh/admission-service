@@ -109,13 +109,20 @@ public class R2InvoiceStorageService {
     }
 
     public URI presignGet(String key) {
+        return presignGet(key, null);
+    }
+
+    public URI presignGet(String key, String downloadFileName) {
         if (!enabled || !StringUtils.hasText(key)) {
             throw new IllegalStateException("R2 storage is not configured.");
         }
-        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+        GetObjectRequest.Builder requestBuilder = GetObjectRequest.builder()
                 .bucket(bucket)
-                .key(key)
-                .build();
+                .key(key);
+        if (StringUtils.hasText(downloadFileName)) {
+            requestBuilder.responseContentDisposition("attachment; filename=\"" + downloadFileName.replace("\"", "") + "\"");
+        }
+        GetObjectRequest getObjectRequest = requestBuilder.build();
         GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
                 .signatureDuration(Duration.ofMinutes(Math.max(1, presignMinutes)))
                 .getObjectRequest(getObjectRequest)

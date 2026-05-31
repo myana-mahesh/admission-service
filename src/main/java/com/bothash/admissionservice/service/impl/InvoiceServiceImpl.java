@@ -6,6 +6,7 @@ import com.bothash.admissionservice.entity.FeeInstallment;
 import com.bothash.admissionservice.entity.FeeInstallmentPayment;
 import com.bothash.admissionservice.entity.FeeInvoice;
 import com.bothash.admissionservice.entity.MiscPayment;
+import com.bothash.admissionservice.entity.BranchMaster;
 import com.bothash.admissionservice.repository.FeeInvoiceRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -372,6 +373,12 @@ public class InvoiceServiceImpl {
 			studentTable.addCell(labelCell("Course"));
 			studentTable.addCell(valueCell(admission.getCourse().getName(), valueFont));
 
+			studentTable.addCell(labelCell("Batch"));
+			studentTable.addCell(valueCell(resolveAdmissionBatch(admission), valueFont));
+
+			studentTable.addCell(labelCell("Branch"));
+			studentTable.addCell(valueCell(resolveAdmissionBranch(admission), valueFont));
+
 			studentTable.addCell(labelCell("Study Year"));
 			studentTable.addCell(valueCell(String.valueOf(inst.getStudyYear()), valueFont));
 
@@ -622,7 +629,7 @@ public class InvoiceServiceImpl {
 			studentTable.setWidthPercentage(100);
 			studentTable.setWidths(new float[] { 1.2f, 1.8f });
 
-			studentTable.addCell(labelCell("Student Name"));
+			studentTable.addCell(labelCell("Name"));
 			studentTable.addCell(valueCell(
 					admission.getStudent() != null ? admission.getStudent().getFullName() : "-", valueFont));
 
@@ -736,7 +743,7 @@ public class InvoiceServiceImpl {
 			studentTable.setWidthPercentage(100);
 			studentTable.setWidths(new float[] { 1.2f, 1.8f });
 
-			studentTable.addCell(labelCell("Student Name"));
+			studentTable.addCell(labelCell("Name"));
 			studentTable.addCell(valueCell(payment.getStudentName(), valueFont));
 
 			studentTable.addCell(labelCell("Contact Number"));
@@ -1046,8 +1053,91 @@ public class InvoiceServiceImpl {
 		studentTable.addCell(labelCell("Course"));
 		studentTable.addCell(valueCell(
 				admission.getCourse() != null ? admission.getCourse().getName() : "-", valueFont));
+		studentTable.addCell(labelCell("Batch"));
+		studentTable.addCell(valueCell(resolveAdmissionBatch(admission), valueFont));
+		studentTable.addCell(labelCell("Branch"));
+		studentTable.addCell(valueCell(resolveAdmissionBranch(admission), valueFont));
 		document.add(studentTable);
 		document.add(Chunk.NEWLINE);
+	}
+
+	public String buildDownloadFileName(FeeInvoice invoice) {
+		if (invoice == null || invoice.getInstallment() == null || invoice.getInstallment().getAdmission() == null) {
+			return "invoice.pdf";
+		}
+		Admission2 admission = invoice.getInstallment().getAdmission();
+		String studentName = safeFileToken(admission.getStudent() != null ? admission.getStudent().getFullName() : null);
+		String batch = safeFileToken(resolveAdmissionBatch(admission));
+		String course = safeFileToken(admission.getCourse() != null ? admission.getCourse().getName() : null);
+		String amount = safeFileToken(safe(invoice.getAmount()));
+		LocalDate invoiceDate = resolveInvoiceDate(invoice);
+		String date = safeFileToken(invoiceDate != null ? invoiceDate.toString() : null);
+		String branch = safeFileToken(resolveAdmissionBranch(admission));
+		return String.join(" - ", studentName, batch, course, amount, date, branch) + ".pdf";
+	}
+
+	private LocalDate resolveInvoiceDate(FeeInvoice invoice) {
+		if (invoice == null) {
+			return LocalDate.now();
+		}
+		if (invoice.getPayment() != null && invoice.getPayment().getPaidOn() != null) {
+			return invoice.getPayment().getPaidOn();
+		}
+		if (invoice.getInstallment() != null && invoice.getInstallment().getPaidOn() != null) {
+			return invoice.getInstallment().getPaidOn();
+		}
+		if (invoice.getCreatedAt() != null) {
+			return invoice.getCreatedAt().toLocalDate();
+		}
+		return LocalDate.now();
+	}
+
+	private String resolveAdmissionBatch(Admission2 admission) {
+		if (admission == null) {
+			return "-";
+		}
+		if (StringUtils.hasText(admission.getBatch())) {
+			return admission.getBatch().trim();
+		}
+		if (admission.getStudent() != null && StringUtils.hasText(admission.getStudent().getBatch())) {
+			return admission.getStudent().getBatch().trim();
+		}
+		return "-";
+	}
+
+	private String resolveAdmissionBranch(Admission2 admission) {
+		if (admission == null) {
+			return "-";
+		}
+		String admissionBranch = branchName(admission.getAdmissionBranch());
+		if (StringUtils.hasText(admissionBranch)) {
+			return admissionBranch;
+		}
+		String lectureBranch = branchName(admission.getLectureBranch());
+		if (StringUtils.hasText(lectureBranch)) {
+			return lectureBranch;
+		}
+		return "-";
+	}
+
+	private String branchName(BranchMaster branch) {
+		if (branch == null) {
+			return null;
+		}
+		if (StringUtils.hasText(branch.getName())) {
+			return branch.getName().trim();
+		}
+		if (StringUtils.hasText(branch.getCode())) {
+			return branch.getCode().trim();
+		}
+		return null;
+	}
+
+	private String safeFileToken(String value) {
+		String normalized = StringUtils.hasText(value) ? value.trim() : "-";
+		normalized = normalized.replaceAll("[\\\\/:*?\"<>|]", " ");
+		normalized = normalized.replaceAll("\\s+", " ").trim();
+		return normalized.isEmpty() ? "-" : normalized;
 	}
 
 	private void addSimplePaymentDetailsTable(Document document,

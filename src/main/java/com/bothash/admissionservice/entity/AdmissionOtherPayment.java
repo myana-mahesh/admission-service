@@ -58,6 +58,9 @@ public class AdmissionOtherPayment extends Auditable {
     @Column(length = 120)
     private String receivedBy;
 
+    @Column(name = "payment_type", length = 20)
+    private String paymentType;
+
     @Column(length = 255)
     private String receiptName;
 

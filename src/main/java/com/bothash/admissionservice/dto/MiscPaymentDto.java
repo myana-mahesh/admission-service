@@ -20,6 +20,7 @@ public class MiscPaymentDto {
     private String feeType;
     private BigDecimal amount;
     private String paymentMode;
+    private String paymentType;
     private LocalDate paymentDate;
     private String receiptName;
     private String receiptUrl;

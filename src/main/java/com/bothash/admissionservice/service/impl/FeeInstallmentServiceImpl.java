@@ -28,6 +28,7 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.HashMap;
@@ -105,6 +106,9 @@ public class FeeInstallmentServiceImpl {
         payment.setIsVerified(true);
         payment.setVerifiedBy(actor);
         payment.setVerifiedAt(java.time.LocalDateTime.now());
+        payment.setRejectionReason(null);
+        payment.setRejectedBy(null);
+        payment.setRejectedAt(null);
 
         FeeInstallment installment = payment.getInstallment();
         var verifiedPayments = paymentRepo.findByInstallment_InstallmentIdOrderByCreatedAtAsc(
@@ -152,6 +156,46 @@ public class FeeInstallmentServiceImpl {
         }
         payment.setIsAccountHeadVerified(true);
         payment.setAccountHeadVerifiedAt(java.time.LocalDateTime.now());
+        payment.setAccountHeadRejectionReason(null);
+        payment.setAccountHeadRejectedBy(null);
+        payment.setAccountHeadRejectedAt(null);
+        return paymentRepo.save(payment);
+    }
+
+    @Transactional
+    public FeeInstallment rejectPayment(Long paymentId, String actor, String reason) {
+        if (!StringUtils.hasText(reason)) {
+            throw new IllegalArgumentException("Rejection reason is required.");
+        }
+        var payment = paymentRepo.findById(paymentId)
+                .orElseThrow(() -> new IllegalArgumentException("Payment not found: " + paymentId));
+
+        payment.setIsVerified(false);
+        payment.setVerifiedBy(null);
+        payment.setVerifiedAt(null);
+        payment.setStatus("Rejected");
+        payment.setRejectionReason(reason.trim());
+        payment.setRejectedBy(StringUtils.hasText(actor) ? actor : resolveAuditActor());
+        payment.setRejectedAt(java.time.LocalDateTime.now());
+        paymentRepo.save(payment);
+
+        FeeInstallment installment = payment.getInstallment();
+        recalculateInstallmentFromPayments(installment);
+        return installment;
+    }
+
+    @Transactional
+    public FeeInstallmentPayment rejectPaymentByAccountHead(Long paymentId, String actor, String reason) {
+        if (!StringUtils.hasText(reason)) {
+            throw new IllegalArgumentException("Rejection reason is required.");
+        }
+        var payment = paymentRepo.findById(paymentId)
+                .orElseThrow(() -> new IllegalArgumentException("Payment not found: " + paymentId));
+        payment.setIsAccountHeadVerified(false);
+        payment.setAccountHeadVerifiedAt(null);
+        payment.setAccountHeadRejectionReason(reason.trim());
+        payment.setAccountHeadRejectedBy(StringUtils.hasText(actor) ? actor : resolveAuditActor());
+        payment.setAccountHeadRejectedAt(java.time.LocalDateTime.now());
         return paymentRepo.save(payment);
     }
 
@@ -212,6 +256,9 @@ public class FeeInstallmentServiceImpl {
             if (!Boolean.TRUE.equals(payment.getIsAccountHeadVerified())) {
                 payment.setIsAccountHeadVerified(true);
                 payment.setAccountHeadVerifiedAt(java.time.LocalDateTime.now());
+                payment.setAccountHeadRejectionReason(null);
+                payment.setAccountHeadRejectedBy(null);
+                payment.setAccountHeadRejectedAt(null);
                 paymentRepo.save(payment);
                 changed = true;
             }
@@ -233,6 +280,66 @@ public class FeeInstallmentServiceImpl {
         return buildPaymentGroups(refreshedPayments).stream()
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("Failed to load account-head verified payment group."));
+    }
+
+    @Transactional
+    public FeePaymentGroupDto rejectPaymentGroup(String paymentGroupId, String actor, String reason) {
+        if (!StringUtils.hasText(paymentGroupId)) {
+            throw new IllegalArgumentException("Payment group is required.");
+        }
+        if (!StringUtils.hasText(reason)) {
+            throw new IllegalArgumentException("Rejection reason is required.");
+        }
+        List<FeeInstallmentPayment> groupPayments = paymentRepo.findByPaymentGroupIdOrderByCreatedAtAscPaymentIdAsc(paymentGroupId);
+        if (groupPayments.isEmpty()) {
+            throw new IllegalArgumentException("Payment group not found: " + paymentGroupId);
+        }
+        String effectiveActor = StringUtils.hasText(actor) ? actor : resolveAuditActor();
+        String trimmedReason = reason.trim();
+        for (FeeInstallmentPayment payment : groupPayments) {
+            payment.setIsVerified(false);
+            payment.setVerifiedBy(null);
+            payment.setVerifiedAt(null);
+            payment.setStatus("Rejected");
+            payment.setRejectionReason(trimmedReason);
+            payment.setRejectedBy(effectiveActor);
+            payment.setRejectedAt(java.time.LocalDateTime.now());
+            paymentRepo.save(payment);
+        }
+        recalculateAdmissionInstallmentsFromPayments(
+                groupPayments.get(0).getInstallment().getAdmission().getAdmissionId(),
+                paymentRepo.findByInstallment_Admission_AdmissionIdOrderByCreatedAtAscPaymentIdAsc(
+                        groupPayments.get(0).getInstallment().getAdmission().getAdmissionId()));
+        return buildPaymentGroups(paymentRepo.findByPaymentGroupIdOrderByCreatedAtAscPaymentIdAsc(paymentGroupId)).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Failed to load rejected payment group."));
+    }
+
+    @Transactional
+    public FeePaymentGroupDto rejectPaymentGroupByAccountHead(String paymentGroupId, String actor, String reason) {
+        if (!StringUtils.hasText(paymentGroupId)) {
+            throw new IllegalArgumentException("Payment group is required.");
+        }
+        if (!StringUtils.hasText(reason)) {
+            throw new IllegalArgumentException("Rejection reason is required.");
+        }
+        List<FeeInstallmentPayment> groupPayments = paymentRepo.findByPaymentGroupIdOrderByCreatedAtAscPaymentIdAsc(paymentGroupId);
+        if (groupPayments.isEmpty()) {
+            throw new IllegalArgumentException("Payment group not found: " + paymentGroupId);
+        }
+        String effectiveActor = StringUtils.hasText(actor) ? actor : resolveAuditActor();
+        String trimmedReason = reason.trim();
+        for (FeeInstallmentPayment payment : groupPayments) {
+            payment.setIsAccountHeadVerified(false);
+            payment.setAccountHeadVerifiedAt(null);
+            payment.setAccountHeadRejectionReason(trimmedReason);
+            payment.setAccountHeadRejectedBy(effectiveActor);
+            payment.setAccountHeadRejectedAt(java.time.LocalDateTime.now());
+            paymentRepo.save(payment);
+        }
+        return buildPaymentGroups(paymentRepo.findByPaymentGroupIdOrderByCreatedAtAscPaymentIdAsc(paymentGroupId)).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Failed to load account-head rejected payment group."));
     }
 
     @Transactional
@@ -324,9 +431,13 @@ public class FeeInstallmentServiceImpl {
     public List<FeePaymentGroupDto> listPaymentGroups(Long admissionId) {
         List<FeeInstallmentPayment> payments = ensurePaymentGroupsForAdmission(admissionId);
         if (payments.isEmpty()) {
-            return List.of();
+            return buildLegacyInstallmentPaymentGroups(admissionId);
         }
-        return buildPaymentGroups(payments);
+        List<FeePaymentGroupDto> groups = new ArrayList<>(buildPaymentGroups(payments));
+        groups.addAll(buildLegacyInstallmentPaymentGroupsWithoutPaymentRows(admissionId, payments));
+        groups.sort(Comparator.comparing(FeePaymentGroupDto::getPaidOn, Comparator.nullsLast(Comparator.naturalOrder())).reversed()
+                .thenComparing(FeePaymentGroupDto::getPaymentGroupId, Comparator.nullsLast(Comparator.reverseOrder())));
+        return groups;
     }
 
     @Transactional
@@ -378,24 +489,56 @@ public class FeeInstallmentServiceImpl {
         String oldRemarks = firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getRemarks).toList());
         String oldReceivedBy = firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getReceivedBy).toList());
         String oldMode = resolvePaymentModeCode(groupPayments);
+        String oldPaymentType = resolvePaymentType(groupPayments);
         LocalDate oldPaidOn = resolvePaidOn(groupPayments);
         if (!StringUtils.hasText(request.getRemarks())) {
             request.setRemarks(oldRemarks);
         }
-
-        UploadRequest effectiveReceipt = request.getReceipt();
-        if (effectiveReceipt == null) {
-            effectiveReceipt = captureExistingReceipt(groupPayments, admission);
+        if (!StringUtils.hasText(request.getPaymentType())) {
+            if (StringUtils.hasText(oldPaymentType)) {
+                request.setPaymentType(oldPaymentType);
+            } else {
+                // Legacy data: prior payments in this group have no payment_type set.
+                // Infer from the mode code so the update doesn't fail validation.
+                String inferred = inferPaymentTypeFromMode(request.getMode());
+                if (inferred == null) {
+                    inferred = inferPaymentTypeFromMode(oldMode);
+                }
+                if (inferred != null) {
+                    request.setPaymentType(inferred);
+                }
+            }
         }
 
-        deletePaymentGroupInternal(groupPayments, request.getReceipt() != null, request.getReceipt() == null);
+        List<UploadRequest> uploadedReceipts = new ArrayList<>();
+        if (request.getReceipts() != null) {
+            for (UploadRequest r : request.getReceipts()) {
+                if (r != null && StringUtils.hasText(r.getStorageUrl())) {
+                    uploadedReceipts.add(r);
+                }
+            }
+        }
+        if (uploadedReceipts.isEmpty() && request.getReceipt() != null
+                && StringUtils.hasText(request.getReceipt().getStorageUrl())) {
+            uploadedReceipts.add(request.getReceipt());
+        }
+
+        List<UploadRequest> effectiveReceipts;
+        boolean replacingReceipts = !uploadedReceipts.isEmpty();
+        if (replacingReceipts) {
+            effectiveReceipts = uploadedReceipts;
+        } else {
+            effectiveReceipts = captureExistingReceipts(groupPayments, admission);
+        }
+
+        deletePaymentGroupInternal(groupPayments, replacingReceipts, !replacingReceipts);
 
         List<FeeInstallmentPayment> newPayments = applyPaymentGroupAllocations(
                 admission,
                 request,
                 role,
                 paymentGroupId,
-                effectiveReceipt
+                effectiveReceipts
         );
 
         Map<String, Object> details = new LinkedHashMap<>();
@@ -410,6 +553,8 @@ public class FeeInstallmentServiceImpl {
         details.put("newReceivedBy", request.getReceivedBy());
         details.put("oldMode", oldMode);
         details.put("newMode", request.getMode());
+        details.put("oldPaymentType", oldPaymentType);
+        details.put("newPaymentType", request.getPaymentType());
         details.put("oldPaidOn", oldPaidOn);
         details.put("newPaidOn", request.getPaidOn());
 
@@ -422,6 +567,7 @@ public class FeeInstallmentServiceImpl {
         addChange(changedFields, "paymentGroup.remarks", oldRemarks, request.getRemarks());
         addChange(changedFields, "paymentGroup.receivedBy", oldReceivedBy, request.getReceivedBy());
         addChange(changedFields, "paymentGroup.mode", oldMode, request.getMode());
+        addChange(changedFields, "paymentGroup.paymentType", oldPaymentType, request.getPaymentType());
         addChange(changedFields, "paymentGroup.paidOn", oldPaidOn, request.getPaidOn());
 
         admissionAuditService.record(admission, "PAYMENT_GROUP_UPDATED", resolveAuditActor(), details, changedFields);
@@ -476,37 +622,80 @@ public class FeeInstallmentServiceImpl {
         java.math.BigDecimal amountPaid = inst.getAmountPaid();
         java.time.LocalDate dueDate = inst.getDueDate();
         String status = inst.getStatus();
-        
-        // Optional safety: don't allow delete if paid
-        if (inst.getAmountPaid() != null && inst.getAmountPaid().signum() > 0) {
-            throw new IllegalStateException("Cannot delete: installment has payment amountPaid > 0");
+
+        List<FeeInstallmentPayment> sourcePayments =
+                paymentRepo.findByInstallment_InstallmentIdOrderByCreatedAtAsc(installmentId);
+        BigDecimal paidToMove = sumPaymentAmounts(sourcePayments);
+
+        if (paidToMove.compareTo(BigDecimal.ZERO) <= 0
+                && amountPaid != null
+                && amountPaid.compareTo(BigDecimal.ZERO) > 0) {
+            throw new IllegalStateException(
+                    "Cannot delete this installment because its paid amount does not have payment history records to reassign.");
         }
-        if ("Paid".equalsIgnoreCase(inst.getStatus())) {
-            throw new IllegalStateException("Cannot delete: installment status is Paid");
+
+        List<FeeInstallment> admissionInstallments =
+                installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admissionId);
+        List<FeeInstallment> nextInstallments = admissionInstallments.stream()
+                .filter(candidate -> !Objects.equals(candidate.getInstallmentId(), installmentId))
+                .filter(candidate -> isInstallmentAfter(candidate, inst))
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        BigDecimal adjustableCapacity = nextInstallments.stream()
+                .map(this::pendingAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        if (paidToMove.compareTo(BigDecimal.ZERO) > 0
+                && paidToMove.compareTo(adjustableCapacity) > 0) {
+            throw new IllegalStateException(
+                    "Cannot delete this installment because Rs " + paidToMove
+                            + " paid against it cannot be adjusted against Rs " + adjustableCapacity
+                            + " pending in next installments.");
         }
+
+        Map<Long, Map<String, Object>> beforeInstallments = snapshotInstallments(admissionInstallments);
+        List<FeeInstallmentPayment> movedPayments = reassignInstallmentPayments(sourcePayments, nextInstallments);
+        List<FeeInstallment> touchedInstallments = movedPayments.stream()
+                .map(FeeInstallmentPayment::getInstallment)
+                .filter(Objects::nonNull)
+                .filter(candidate -> candidate.getInstallmentId() != null)
+                .collect(Collectors.collectingAndThen(
+                        Collectors.toMap(FeeInstallment::getInstallmentId, candidate -> candidate, (left, right) -> left, LinkedHashMap::new),
+                        map -> new ArrayList<>(map.values())
+                ));
 
         // 1) Invoices (delete files first if needed)
         List<FeeInvoice> invoices = invoiceRepo.findByInstallment_InstallmentId(installmentId);
+        List<FeeInvoice> directInstallmentInvoices = invoices.stream()
+                .filter(inv -> inv.getPayment() == null)
+                .collect(Collectors.toList());
         if (deleteFilesAlso) {
-            for (FeeInvoice inv : invoices) {
+            for (FeeInvoice inv : directInstallmentInvoices) {
                 safeDeleteLocalFile(inv.getFilePath());  // your invoice pdf path
             }
         }
-        invoiceRepo.deleteAll(invoices); // or invoiceRepo.deleteByInstallment_InstallmentId(installmentId)
+        invoiceRepo.deleteAll(directInstallmentInvoices); // keep/move invoices that belong to payment rows
 
         // 2) Uploads linked to installment
         List<FileUpload> uploads = uploadRepo.findByInstallment_InstallmentId(installmentId);
+        List<FileUpload> directInstallmentUploads = uploads.stream()
+                .filter(upload -> upload.getInstallmentPayment() == null)
+                .collect(Collectors.toList());
         if (deleteFilesAlso) {
-            for (FileUpload fu : uploads) {
+            for (FileUpload fu : directInstallmentUploads) {
                 // If storageUrl is local file path or file://... you can delete locally.
                 // If it's S3/cloud url, you must call that provider API instead.
             	safeDeleteLocalFile(fu.getStorageUrl());
             }
         }
-        uploadRepo.deleteAll(uploads); // or uploadRepo.deleteByInstallment_InstallmentId(installmentId)
+        uploadRepo.deleteAll(directInstallmentUploads); // keep/move uploads that belong to payment rows
 
         // 3) Delete installment
         installmentRepo.delete(inst);
+
+        for (FeeInstallment touched : touchedInstallments) {
+            recalculateInstallmentFromPayments(touched);
+        }
         
         resequenceInstallments(admissionId, studyYear);
 
@@ -516,6 +705,8 @@ public class FeeInstallmentServiceImpl {
         details.put("studyYear", studyYear);
         details.put("installmentNo", installmentNo);
         details.put("deletedAt", OffsetDateTime.now());
+        details.put("reassignedPaymentAmount", paidToMove);
+        details.put("reassignedPaymentCount", movedPayments.size());
 
         Map<String, Object> beforePayload = new HashMap<>();
         beforePayload.put("studyYear", studyYear);
@@ -532,8 +723,110 @@ public class FeeInstallmentServiceImpl {
 
         Map<String, Object> changedFields = new HashMap<>();
         changedFields.put("installmentDeleted", deleteChange);
+        changedFields.putAll(buildInstallmentDiffPayload(
+                beforeInstallments,
+                installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admissionId)
+        ));
 
         admissionAuditService.record(admission, "INSTALLMENT_DELETED", resolveAuditActor(), details, changedFields);
+    }
+
+    private List<FeeInstallmentPayment> reassignInstallmentPayments(List<FeeInstallmentPayment> sourcePayments,
+                                                                    List<FeeInstallment> nextInstallments) {
+        List<FeeInstallmentPayment> movedPayments = new ArrayList<>();
+        if (sourcePayments == null || sourcePayments.isEmpty()) {
+            return movedPayments;
+        }
+
+        Map<Long, BigDecimal> simulatedPaid = nextInstallments.stream()
+                .collect(Collectors.toMap(
+                        FeeInstallment::getInstallmentId,
+                        installment -> defaultAmount(installment.getAmountPaid()),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+
+        int targetIndex = 0;
+        for (FeeInstallmentPayment sourcePayment : sourcePayments) {
+            BigDecimal remaining = defaultAmount(sourcePayment.getAmount());
+            if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalStateException("Cannot delete this installment because it has non-positive payment records to reassign.");
+            }
+
+            boolean reusedOriginal = false;
+            while (remaining.compareTo(BigDecimal.ZERO) > 0) {
+                FeeInstallment target = null;
+                BigDecimal targetCapacity = BigDecimal.ZERO;
+                while (targetIndex < nextInstallments.size()) {
+                    FeeInstallment candidate = nextInstallments.get(targetIndex);
+                    targetCapacity = defaultAmount(candidate.getAmountDue())
+                            .subtract(simulatedPaid.getOrDefault(candidate.getInstallmentId(), BigDecimal.ZERO));
+                    if (targetCapacity.compareTo(BigDecimal.ZERO) > 0) {
+                        target = candidate;
+                        break;
+                    }
+                    targetIndex++;
+                }
+                if (target == null) {
+                    throw new IllegalStateException("Cannot delete this installment because there is no pending next installment to adjust its payment.");
+                }
+
+                BigDecimal applied = remaining.min(targetCapacity);
+                FeeInstallmentPayment paymentToSave = reusedOriginal ? clonePaymentForRepair(sourcePayment) : sourcePayment;
+                paymentToSave.setInstallment(target);
+                paymentToSave.setAmount(applied);
+                FeeInstallmentPayment savedPayment = paymentRepo.save(paymentToSave);
+                movePaymentReferences(savedPayment, target);
+                movedPayments.add(savedPayment);
+
+                simulatedPaid.put(target.getInstallmentId(),
+                        simulatedPaid.getOrDefault(target.getInstallmentId(), BigDecimal.ZERO).add(applied));
+                remaining = remaining.subtract(applied);
+                reusedOriginal = true;
+            }
+        }
+        return movedPayments;
+    }
+
+    private void movePaymentReferences(FeeInstallmentPayment payment, FeeInstallment targetInstallment) {
+        if (payment == null || payment.getPaymentId() == null || targetInstallment == null) {
+            return;
+        }
+
+        List<FeeInvoice> paymentInvoices = invoiceRepo.findByPayment_PaymentId(payment.getPaymentId());
+        for (FeeInvoice invoice : paymentInvoices) {
+            invoice.setInstallment(targetInstallment);
+            invoice.setAmount(payment.getAmount());
+        }
+        invoiceRepo.saveAll(paymentInvoices);
+
+        List<FileUpload> paymentUploads = uploadRepo.findByInstallmentPayment_PaymentId(payment.getPaymentId());
+        for (FileUpload upload : paymentUploads) {
+            upload.setInstallment(targetInstallment);
+        }
+        uploadRepo.saveAll(paymentUploads);
+    }
+
+    private boolean isInstallmentAfter(FeeInstallment candidate, FeeInstallment base) {
+        int studyYearCompare = Integer.compare(
+                candidate.getStudyYear() != null ? candidate.getStudyYear() : 0,
+                base.getStudyYear() != null ? base.getStudyYear() : 0);
+        if (studyYearCompare != 0) {
+            return studyYearCompare > 0;
+        }
+        return Integer.compare(
+                candidate.getInstallmentNo() != null ? candidate.getInstallmentNo() : 0,
+                base.getInstallmentNo() != null ? base.getInstallmentNo() : 0) > 0;
+    }
+
+    private BigDecimal pendingAmount(FeeInstallment installment) {
+        return defaultAmount(installment.getAmountDue())
+                .subtract(defaultAmount(installment.getAmountPaid()))
+                .max(BigDecimal.ZERO);
+    }
+
+    private BigDecimal defaultAmount(BigDecimal amount) {
+        return amount != null ? amount : BigDecimal.ZERO;
     }
 
     private void safeDeleteLocalFile(String filePath) {
@@ -623,7 +916,12 @@ public class FeeInstallmentServiceImpl {
             paymentRepo.saveAll(changed);
             payments = paymentRepo.findByInstallment_Admission_AdmissionIdOrderByCreatedAtAscPaymentIdAsc(admissionId);
         }
+        if (hasLegacyInstallmentPaymentsWithoutPaymentRows(admissionId, payments)) {
+            return payments;
+        }
+        payments = repairPositivePaymentGroupsIfNeeded(admissionId, payments);
         payments = repairNegativePaymentGroupsIfNeeded(admissionId, payments);
+        recalculateAdmissionInstallmentsFromPayments(admissionId, payments);
         return payments;
     }
 
@@ -658,6 +956,73 @@ public class FeeInstallmentServiceImpl {
                 .toList();
     }
 
+    private List<FeePaymentGroupDto> buildLegacyInstallmentPaymentGroups(Long admissionId) {
+        List<FeeInstallment> installments =
+                installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admissionId);
+        if (installments.isEmpty()) {
+            return List.of();
+        }
+
+        return installments.stream()
+                .filter(installment -> {
+                    BigDecimal paid = installment.getAmountPaid() != null ? installment.getAmountPaid() : BigDecimal.ZERO;
+                    return paid.compareTo(BigDecimal.ZERO) > 0;
+                })
+                .map(this::toLegacyInstallmentPaymentGroupDto)
+                .sorted(Comparator.comparing(FeePaymentGroupDto::getPaidOn, Comparator.nullsLast(Comparator.naturalOrder())).reversed()
+                        .thenComparing(FeePaymentGroupDto::getPaymentGroupId, Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
+    }
+
+    private List<FeePaymentGroupDto> buildLegacyInstallmentPaymentGroupsWithoutPaymentRows(Long admissionId,
+                                                                                           List<FeeInstallmentPayment> payments) {
+        java.util.Set<Long> installmentIdsWithPaymentRows = payments == null
+                ? java.util.Set.of()
+                : payments.stream()
+                        .map(FeeInstallmentPayment::getInstallment)
+                        .filter(Objects::nonNull)
+                        .map(FeeInstallment::getInstallmentId)
+                        .filter(Objects::nonNull)
+                        .collect(Collectors.toSet());
+        return buildLegacyInstallmentPaymentGroups(admissionId).stream()
+                .filter(group -> {
+                    Long installmentId = parseLegacyInstallmentId(group.getPaymentGroupId());
+                    return installmentId != null && !installmentIdsWithPaymentRows.contains(installmentId);
+                })
+                .toList();
+    }
+
+    private boolean hasLegacyInstallmentPaymentsWithoutPaymentRows(Long admissionId, List<FeeInstallmentPayment> payments) {
+        return !buildLegacyInstallmentPaymentGroupsWithoutPaymentRows(admissionId, payments).isEmpty();
+    }
+
+    private Long parseLegacyInstallmentId(String paymentGroupId) {
+        if (!StringUtils.hasText(paymentGroupId) || !paymentGroupId.startsWith("legacy-installment::")) {
+            return null;
+        }
+        try {
+            return Long.valueOf(paymentGroupId.substring("legacy-installment::".length()));
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private FeePaymentGroupDto toLegacyInstallmentPaymentGroupDto(FeeInstallment installment) {
+        FeePaymentGroupDto dto = new FeePaymentGroupDto();
+        dto.setPaymentGroupId("legacy-installment::" + installment.getInstallmentId());
+        dto.setPaidOn(installment.getPaidOn() != null ? installment.getPaidOn() : installment.getDueDate());
+        dto.setTotalAmount(installment.getAmountPaid() != null ? installment.getAmountPaid() : BigDecimal.ZERO);
+        dto.setPaymentMode(installment.getPaymentMode() != null ? installment.getPaymentMode().getLabel() : null);
+        dto.setTxnRef(installment.getTxnRef());
+        dto.setReceivedBy(installment.getReceivedBy());
+        dto.setStatus(Boolean.TRUE.equals(installment.getIsVerified()) ? "Paid" : "Under Verification");
+        dto.setVerified(Boolean.TRUE.equals(installment.getIsVerified()));
+        dto.setAccountHeadVerified(false);
+        dto.setAccountHeadRejected(false);
+        dto.setAllocationCount(1);
+        return dto;
+    }
+
     private FeePaymentGroupDto toPaymentGroupDto(String paymentGroupId,
                                                  List<FeeInstallmentPayment> groupPayments,
                                                  Map<Long, List<FileUpload>> uploadsByPayment) {
@@ -668,19 +1033,34 @@ public class FeeInstallmentServiceImpl {
         dto.setPaidOn(resolvePaidOn(groupPayments));
         dto.setTotalAmount(sumPaymentAmounts(groupPayments));
         dto.setPaymentMode(resolvePaymentModeCode(groupPayments));
+        dto.setPaymentType(resolvePaymentType(groupPayments));
         dto.setTxnRef(firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getTxnRef).toList()));
         dto.setRemarks(firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getRemarks).toList()));
         dto.setReceivedBy(firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getReceivedBy).toList()));
         boolean verified = groupPayments.stream().allMatch(payment -> Boolean.TRUE.equals(payment.getIsVerified()));
         boolean accountHeadVerified = groupPayments.stream().allMatch(payment -> Boolean.TRUE.equals(payment.getIsAccountHeadVerified()));
+        boolean rejected = groupPayments.stream().anyMatch(this::isHoRejected);
+        boolean accountHeadRejected = groupPayments.stream().anyMatch(this::isAccountHeadRejected);
         dto.setVerified(verified);
         dto.setAccountHeadVerified(accountHeadVerified);
-        dto.setStatus(verified ? "Paid" : "Under Verification");
+        dto.setAccountHeadRejected(accountHeadRejected);
+        dto.setRejectionReason(firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getRejectionReason).toList()));
+        dto.setAccountHeadRejectionReason(firstNonBlank(groupPayments.stream().map(FeeInstallmentPayment::getAccountHeadRejectionReason).toList()));
+        dto.setStatus(rejected ? "Rejected" : (verified ? "Paid" : "Under Verification"));
         dto.setAllocationCount(groupPayments.size());
-        FileUpload receipt = resolveFirstReceipt(groupPayments, uploadsByPayment);
-        if (receipt != null) {
-            dto.setReceiptUrl(receipt.getStorageUrl());
-            dto.setReceiptName(receipt.getFilename());
+        List<FileUpload> groupReceipts = resolveAllReceipts(groupPayments, uploadsByPayment);
+        if (!groupReceipts.isEmpty()) {
+            FileUpload first = groupReceipts.get(0);
+            dto.setReceiptUrl(first.getStorageUrl());
+            dto.setReceiptName(first.getFilename());
+            List<FeePaymentGroupDto.ReceiptLinkDto> receiptLinks = new ArrayList<>();
+            for (FileUpload upload : groupReceipts) {
+                FeePaymentGroupDto.ReceiptLinkDto link = new FeePaymentGroupDto.ReceiptLinkDto();
+                link.setName(upload.getFilename());
+                link.setUrl(upload.getStorageUrl());
+                receiptLinks.add(link);
+            }
+            dto.setReceipts(receiptLinks);
         }
         FeeInvoice groupedInvoice = resolveGroupedInvoice(groupPayments);
         if (groupedInvoice != null) {
@@ -688,6 +1068,17 @@ public class FeeInstallmentServiceImpl {
             dto.setInvoiceUrl(groupedInvoice.getDownloadUrl());
         }
         return dto;
+    }
+
+    private List<FileUpload> resolveAllReceipts(List<FeeInstallmentPayment> groupPayments, Map<Long, List<FileUpload>> uploadsByPayment) {
+        List<FileUpload> all = new ArrayList<>();
+        for (FeeInstallmentPayment payment : groupPayments) {
+            List<FileUpload> uploads = uploadsByPayment.get(payment.getPaymentId());
+            if (uploads != null) {
+                all.addAll(uploads);
+            }
+        }
+        return all;
     }
 
     private FileUpload resolveFirstReceipt(List<FeeInstallmentPayment> groupPayments, Map<Long, List<FileUpload>> uploadsByPayment) {
@@ -752,9 +1143,32 @@ public class FeeInstallmentServiceImpl {
                 .build();
     }
 
+    private List<UploadRequest> captureExistingReceipts(List<FeeInstallmentPayment> groupPayments, Admission2 admission) {
+        List<Long> paymentIds = groupPayments.stream().map(FeeInstallmentPayment::getPaymentId).toList();
+        List<FileUpload> uploads = uploadRepo.findByInstallmentPayment_PaymentIdIn(paymentIds);
+        List<UploadRequest> result = new ArrayList<>();
+        for (FileUpload upload : uploads) {
+            result.add(UploadRequest.builder()
+                    .docTypeCode("RECEIPT")
+                    .filename(upload.getFilename())
+                    .mimeType(upload.getMimeType())
+                    .sizeBytes(upload.getSizeBytes())
+                    .storageUrl(upload.getStorageUrl())
+                    .sha256(upload.getSha256())
+                    .label(upload.getLabel())
+                    .build());
+        }
+        return result;
+    }
+
     private List<FeeInstallmentPayment> repairNegativePaymentGroupsIfNeeded(Long admissionId,
                                                                             List<FeeInstallmentPayment> payments) {
         if (payments == null || payments.isEmpty()) {
+            return payments;
+        }
+        List<FeeInstallment> admissionInstallments =
+                installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admissionId);
+        if (admissionInstallments.isEmpty()) {
             return payments;
         }
         Map<String, List<FeeInstallmentPayment>> grouped = payments.stream()
@@ -772,11 +1186,12 @@ public class FeeInstallmentServiceImpl {
 
         boolean repairedAny = false;
         for (String paymentGroupId : negativeGroupIds) {
-            List<FeeInstallmentPayment> currentGroup = paymentRepo.findByPaymentGroupIdOrderByCreatedAtAscPaymentIdAsc(paymentGroupId);
+            List<FeeInstallmentPayment> currentGroup = grouped.getOrDefault(paymentGroupId, List.of());
             if (currentGroup.isEmpty() || sumPaymentAmounts(currentGroup).compareTo(BigDecimal.ZERO) >= 0) {
                 continue;
             }
-            List<ExpectedNegativeAllocation> expectedAllocations = buildExpectedNegativeAllocations(currentGroup);
+            List<ExpectedNegativeAllocation> expectedAllocations =
+                    buildExpectedNegativeAllocations(currentGroup, payments, admissionInstallments);
             if (expectedAllocations.isEmpty() || !negativePaymentGroupNeedsRepair(currentGroup, expectedAllocations)) {
                 continue;
             }
@@ -790,6 +1205,165 @@ public class FeeInstallmentServiceImpl {
         return payments;
     }
 
+    private List<FeeInstallmentPayment> repairPositivePaymentGroupsIfNeeded(Long admissionId,
+                                                                            List<FeeInstallmentPayment> payments) {
+        if (payments == null || payments.isEmpty()) {
+            return payments;
+        }
+        List<FeeInstallment> admissionInstallments =
+                installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admissionId);
+        if (admissionInstallments.isEmpty()) {
+            return payments;
+        }
+
+        Map<Long, Integer> installmentIndexById = new LinkedHashMap<>();
+        for (int i = 0; i < admissionInstallments.size(); i++) {
+            FeeInstallment installment = admissionInstallments.get(i);
+            if (installment != null && installment.getInstallmentId() != null) {
+                installmentIndexById.put(installment.getInstallmentId(), i);
+            }
+        }
+
+        boolean repairedAny = false;
+        java.util.Set<String> repairedGroupIds = new java.util.HashSet<>();
+
+        List<FeeInstallmentPayment> admissionPayments = payments;
+        while (true) {
+            Map<String, List<FeeInstallmentPayment>> grouped = admissionPayments.stream()
+                    .filter(payment -> StringUtils.hasText(payment.getPaymentGroupId()))
+                    .collect(Collectors.groupingBy(FeeInstallmentPayment::getPaymentGroupId, LinkedHashMap::new, Collectors.toList()));
+            if (grouped.isEmpty()) {
+                return admissionPayments;
+            }
+
+            Map<String, BigDecimal> positiveGroupTotals = new LinkedHashMap<>();
+            Map<String, FeeInstallmentPayment> groupStartPayments = new LinkedHashMap<>();
+            for (Map.Entry<String, List<FeeInstallmentPayment>> entry : grouped.entrySet()) {
+                String groupId = entry.getKey();
+                List<FeeInstallmentPayment> groupPayments = entry.getValue();
+                if (!StringUtils.hasText(groupId) || groupPayments == null || groupPayments.isEmpty()) {
+                    continue;
+                }
+                BigDecimal groupTotal = sumPaymentAmounts(groupPayments);
+                if (groupTotal.compareTo(BigDecimal.ZERO) <= 0) {
+                    continue;
+                }
+                positiveGroupTotals.put(groupId, groupTotal);
+                groupStartPayments.put(groupId, firstPaymentInGroup(groupPayments));
+            }
+
+            List<String> positiveGroupIds = positiveGroupTotals.keySet().stream()
+                    .sorted((left, right) -> comparePaymentSequence(
+                            groupStartPayments.get(left),
+                            groupStartPayments.get(right)))
+                    .toList();
+            if (positiveGroupIds.isEmpty()) {
+                return admissionPayments;
+            }
+
+            Map<String, BigDecimal[]> paidBeforeSnapshots = buildPaidBeforeSnapshotsForGroupStarts(
+                    admissionPayments,
+                    positiveGroupIds,
+                    groupStartPayments,
+                    installmentIndexById,
+                    admissionInstallments.size());
+
+            boolean repairedThisPass = false;
+            for (String paymentGroupId : positiveGroupIds) {
+                if (repairedGroupIds.contains(paymentGroupId)) {
+                    continue;
+                }
+                List<FeeInstallmentPayment> currentGroup = grouped.getOrDefault(paymentGroupId, List.of());
+                BigDecimal groupTotal = positiveGroupTotals.get(paymentGroupId);
+                if (currentGroup.isEmpty() || groupTotal == null || groupTotal.compareTo(BigDecimal.ZERO) <= 0) {
+                    repairedGroupIds.add(paymentGroupId);
+                    continue;
+                }
+
+                BigDecimal[] paidBeforeGroup = paidBeforeSnapshots.get(paymentGroupId);
+                List<ExpectedPositiveAllocation> expectedAllocations = paidBeforeGroup == null
+                        ? buildExpectedPositiveAllocations(currentGroup, admissionPayments)
+                        : buildExpectedPositiveAllocations(groupTotal, admissionInstallments, paidBeforeGroup);
+                if (expectedAllocations.isEmpty() || !positivePaymentGroupNeedsRepair(currentGroup, expectedAllocations)) {
+                    repairedGroupIds.add(paymentGroupId);
+                    continue;
+                }
+
+                repairPositivePaymentGroup(currentGroup, expectedAllocations, admissionInstallments);
+                repairedGroupIds.add(paymentGroupId);
+                repairedThisPass = true;
+                repairedAny = true;
+
+                // Refresh once after each repair so subsequent groups compute "paid before group" correctly.
+                admissionPayments = paymentRepo.findByInstallment_Admission_AdmissionIdOrderByCreatedAtAscPaymentIdAsc(admissionId);
+                break;
+            }
+
+            if (!repairedThisPass) {
+                break;
+            }
+        }
+
+        return repairedAny
+                ? paymentRepo.findByInstallment_Admission_AdmissionIdOrderByCreatedAtAscPaymentIdAsc(admissionId)
+                : payments;
+    }
+
+    private Map<String, BigDecimal[]> buildPaidBeforeSnapshotsForGroupStarts(
+            List<FeeInstallmentPayment> admissionPayments,
+            List<String> groupIds,
+            Map<String, FeeInstallmentPayment> groupStartPayments,
+            Map<Long, Integer> installmentIndexById,
+            int installmentCount) {
+        if (admissionPayments == null || admissionPayments.isEmpty()
+                || groupIds == null || groupIds.isEmpty()
+                || groupStartPayments == null || groupStartPayments.isEmpty()
+                || installmentIndexById == null || installmentIndexById.isEmpty()
+                || installmentCount <= 0) {
+            return Map.of();
+        }
+
+        Map<Long, String> startPaymentIdToGroupId = new HashMap<>();
+        for (String groupId : groupIds) {
+            FeeInstallmentPayment startPayment = groupStartPayments.get(groupId);
+            Long paymentId = startPayment != null ? startPayment.getPaymentId() : null;
+            if (paymentId != null) {
+                startPaymentIdToGroupId.put(paymentId, groupId);
+            }
+        }
+        if (startPaymentIdToGroupId.isEmpty()) {
+            return Map.of();
+        }
+
+        BigDecimal[] runningPaid = new BigDecimal[installmentCount];
+        Arrays.fill(runningPaid, BigDecimal.ZERO);
+
+        Map<String, BigDecimal[]> snapshots = new LinkedHashMap<>();
+        for (FeeInstallmentPayment payment : admissionPayments) {
+            if (payment == null) {
+                continue;
+            }
+
+            Long paymentId = payment.getPaymentId();
+            String groupId = paymentId != null ? startPaymentIdToGroupId.get(paymentId) : null;
+            if (StringUtils.hasText(groupId) && !snapshots.containsKey(groupId)) {
+                snapshots.put(groupId, runningPaid.clone());
+            }
+
+            FeeInstallment installment = payment.getInstallment();
+            Long installmentId = installment != null ? installment.getInstallmentId() : null;
+            Integer index = installmentId != null ? installmentIndexById.get(installmentId) : null;
+            if (index == null || index < 0 || index >= installmentCount) {
+                continue;
+            }
+
+            BigDecimal amount = payment.getAmount() != null ? payment.getAmount() : BigDecimal.ZERO;
+            runningPaid[index] = runningPaid[index].add(amount);
+        }
+
+        return snapshots;
+    }
+
     private int compareGroupStart(List<FeeInstallmentPayment> left, List<FeeInstallmentPayment> right) {
         FeeInstallmentPayment leftStart = firstPaymentInGroup(left);
         FeeInstallmentPayment rightStart = firstPaymentInGroup(right);
@@ -797,11 +1371,19 @@ public class FeeInstallmentServiceImpl {
     }
 
     private FeeInstallmentPayment firstPaymentInGroup(List<FeeInstallmentPayment> groupPayments) {
-        return groupPayments.stream()
-                .filter(Objects::nonNull)
-                .sorted(this::comparePaymentSequence)
-                .findFirst()
-                .orElse(null);
+        if (groupPayments == null || groupPayments.isEmpty()) {
+            return null;
+        }
+        FeeInstallmentPayment first = null;
+        for (FeeInstallmentPayment payment : groupPayments) {
+            if (payment == null) {
+                continue;
+            }
+            if (first == null || comparePaymentSequence(payment, first) < 0) {
+                first = payment;
+            }
+        }
+        return first;
     }
 
     private int comparePaymentSequence(FeeInstallmentPayment left, FeeInstallmentPayment right) {
@@ -868,13 +1450,46 @@ public class FeeInstallmentServiceImpl {
                 .collect(Collectors.toSet());
         List<FeeInstallmentPayment> admissionPayments =
                 paymentRepo.findByInstallment_Admission_AdmissionIdOrderByCreatedAtAscPaymentIdAsc(admissionId);
+        return buildExpectedNegativeAllocations(groupPayments, groupPaymentIds, admissionPayments, installments);
+    }
+
+    private List<ExpectedNegativeAllocation> buildExpectedNegativeAllocations(List<FeeInstallmentPayment> groupPayments,
+                                                                             List<FeeInstallmentPayment> admissionPayments,
+                                                                             List<FeeInstallment> installments) {
+        if (groupPayments == null || groupPayments.isEmpty()) {
+            return List.of();
+        }
+        java.util.Set<Long> groupPaymentIds = groupPayments.stream()
+                .map(FeeInstallmentPayment::getPaymentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return buildExpectedNegativeAllocations(groupPayments, groupPaymentIds, admissionPayments, installments);
+    }
+
+    private List<ExpectedNegativeAllocation> buildExpectedNegativeAllocations(List<FeeInstallmentPayment> groupPayments,
+                                                                             java.util.Set<Long> groupPaymentIds,
+                                                                             List<FeeInstallmentPayment> admissionPayments,
+                                                                             List<FeeInstallment> installments) {
+        if (groupPayments == null || groupPayments.isEmpty()) {
+            return List.of();
+        }
+        BigDecimal groupTotal = sumPaymentAmounts(groupPayments);
+        if (groupTotal.compareTo(BigDecimal.ZERO) >= 0) {
+            return List.of();
+        }
+        FeeInstallmentPayment firstGroupPayment = firstPaymentInGroup(groupPayments);
+        if (firstGroupPayment == null || installments == null || installments.isEmpty()) {
+            return List.of();
+        }
 
         Map<Long, BigDecimal> paidBeforeGroup = new LinkedHashMap<>();
         for (FeeInstallment installment : installments) {
             paidBeforeGroup.put(installment.getInstallmentId(), BigDecimal.ZERO);
         }
-        for (FeeInstallmentPayment payment : admissionPayments) {
-            if (payment == null || groupPaymentIds.contains(payment.getPaymentId())) {
+        List<FeeInstallmentPayment> effectiveAdmissionPayments = admissionPayments != null ? admissionPayments : List.of();
+        java.util.Set<Long> effectiveGroupPaymentIds = groupPaymentIds != null ? groupPaymentIds : java.util.Set.of();
+        for (FeeInstallmentPayment payment : effectiveAdmissionPayments) {
+            if (payment == null || effectiveGroupPaymentIds.contains(payment.getPaymentId())) {
                 continue;
             }
             if (comparePaymentSequence(payment, firstGroupPayment) >= 0) {
@@ -910,6 +1525,110 @@ public class FeeInstallmentServiceImpl {
         return expected;
     }
 
+    private List<ExpectedPositiveAllocation> buildExpectedPositiveAllocations(List<FeeInstallmentPayment> groupPayments,
+                                                                              List<FeeInstallmentPayment> admissionPayments) {
+        if (groupPayments == null || groupPayments.isEmpty()) {
+            return List.of();
+        }
+        BigDecimal groupTotal = sumPaymentAmounts(groupPayments);
+        if (groupTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            return List.of();
+        }
+        FeeInstallmentPayment firstGroupPayment = firstPaymentInGroup(groupPayments);
+        if (firstGroupPayment == null || firstGroupPayment.getInstallment() == null
+                || firstGroupPayment.getInstallment().getAdmission() == null) {
+            return List.of();
+        }
+        Long admissionId = firstGroupPayment.getInstallment().getAdmission().getAdmissionId();
+        List<FeeInstallment> installments = installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admissionId);
+        if (installments.isEmpty()) {
+            return List.of();
+        }
+
+        java.util.Set<Long> groupPaymentIds = groupPayments.stream()
+                .map(FeeInstallmentPayment::getPaymentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        List<FeeInstallmentPayment> effectiveAdmissionPayments = admissionPayments != null
+                ? admissionPayments
+                : paymentRepo.findByInstallment_Admission_AdmissionIdOrderByCreatedAtAscPaymentIdAsc(admissionId);
+
+        Map<Long, BigDecimal> paidBeforeGroup = new LinkedHashMap<>();
+        for (FeeInstallment installment : installments) {
+            paidBeforeGroup.put(installment.getInstallmentId(), BigDecimal.ZERO);
+        }
+        for (FeeInstallmentPayment payment : effectiveAdmissionPayments) {
+            if (payment == null || groupPaymentIds.contains(payment.getPaymentId())) {
+                continue;
+            }
+            if (comparePaymentSequence(payment, firstGroupPayment) >= 0) {
+                continue;
+            }
+            FeeInstallment installment = payment.getInstallment();
+            if (installment == null || installment.getInstallmentId() == null) {
+                continue;
+            }
+            BigDecimal amount = payment.getAmount() != null ? payment.getAmount() : BigDecimal.ZERO;
+            paidBeforeGroup.merge(installment.getInstallmentId(), amount, BigDecimal::add);
+        }
+
+        BigDecimal remaining = groupTotal;
+        List<ExpectedPositiveAllocation> expected = new ArrayList<>();
+        for (FeeInstallment installment : installments) {
+            if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
+                break;
+            }
+            BigDecimal due = installment.getAmountDue() != null ? installment.getAmountDue() : BigDecimal.ZERO;
+            BigDecimal alreadyPaid = paidBeforeGroup.getOrDefault(installment.getInstallmentId(), BigDecimal.ZERO);
+            BigDecimal pending = due.subtract(alreadyPaid);
+            if (pending.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            BigDecimal applied = remaining.min(pending);
+            expected.add(new ExpectedPositiveAllocation(installment, applied));
+            remaining = remaining.subtract(applied);
+        }
+        if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+            return List.of();
+        }
+        return expected;
+    }
+
+    private List<ExpectedPositiveAllocation> buildExpectedPositiveAllocations(BigDecimal groupTotal,
+                                                                              List<FeeInstallment> installments,
+                                                                              BigDecimal[] paidBeforeGroup) {
+        if (groupTotal == null || groupTotal.compareTo(BigDecimal.ZERO) <= 0
+                || installments == null || installments.isEmpty()
+                || paidBeforeGroup == null || paidBeforeGroup.length < installments.size()) {
+            return List.of();
+        }
+
+        BigDecimal remaining = groupTotal;
+        List<ExpectedPositiveAllocation> expected = new ArrayList<>();
+        for (int i = 0; i < installments.size(); i++) {
+            if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
+                break;
+            }
+            FeeInstallment installment = installments.get(i);
+            if (installment == null) {
+                continue;
+            }
+            BigDecimal due = installment.getAmountDue() != null ? installment.getAmountDue() : BigDecimal.ZERO;
+            BigDecimal alreadyPaid = paidBeforeGroup[i] != null ? paidBeforeGroup[i] : BigDecimal.ZERO;
+            BigDecimal pending = due.subtract(alreadyPaid);
+            if (pending.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            BigDecimal applied = remaining.min(pending);
+            expected.add(new ExpectedPositiveAllocation(installment, applied));
+            remaining = remaining.subtract(applied);
+        }
+        if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+            return List.of();
+        }
+        return expected;
+    }
+
     private boolean negativePaymentGroupNeedsRepair(List<FeeInstallmentPayment> groupPayments,
                                                     List<ExpectedNegativeAllocation> expectedAllocations) {
         Map<Long, BigDecimal> actualByInstallment = new LinkedHashMap<>();
@@ -922,6 +1641,32 @@ public class FeeInstallmentServiceImpl {
         }
         Map<Long, BigDecimal> expectedByInstallment = new LinkedHashMap<>();
         for (ExpectedNegativeAllocation allocation : expectedAllocations) {
+            expectedByInstallment.merge(allocation.installment().getInstallmentId(), allocation.amount(), BigDecimal::add);
+        }
+        if (actualByInstallment.size() != expectedByInstallment.size()) {
+            return true;
+        }
+        for (Map.Entry<Long, BigDecimal> entry : expectedByInstallment.entrySet()) {
+            BigDecimal actual = actualByInstallment.get(entry.getKey());
+            if (actual == null || actual.compareTo(entry.getValue()) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean positivePaymentGroupNeedsRepair(List<FeeInstallmentPayment> groupPayments,
+                                                    List<ExpectedPositiveAllocation> expectedAllocations) {
+        Map<Long, BigDecimal> actualByInstallment = new LinkedHashMap<>();
+        for (FeeInstallmentPayment payment : groupPayments) {
+            if (payment == null || payment.getInstallment() == null || payment.getInstallment().getInstallmentId() == null) {
+                continue;
+            }
+            BigDecimal amount = payment.getAmount() != null ? payment.getAmount() : BigDecimal.ZERO;
+            actualByInstallment.merge(payment.getInstallment().getInstallmentId(), amount, BigDecimal::add);
+        }
+        Map<Long, BigDecimal> expectedByInstallment = new LinkedHashMap<>();
+        for (ExpectedPositiveAllocation allocation : expectedAllocations) {
             expectedByInstallment.merge(allocation.installment().getInstallmentId(), allocation.amount(), BigDecimal::add);
         }
         if (actualByInstallment.size() != expectedByInstallment.size()) {
@@ -955,7 +1700,7 @@ public class FeeInstallmentServiceImpl {
         List<FeeInstallment> admissionInstallments =
                 installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admission.getAdmissionId());
         Map<Long, Map<String, Object>> beforeInstallments = snapshotInstallments(admissionInstallments);
-        UploadRequest existingReceipt = captureExistingReceipt(sortedGroupPayments, admission);
+        List<UploadRequest> existingReceipts = captureExistingReceipts(sortedGroupPayments, admission);
         List<Long> oldPaymentIds = sortedGroupPayments.stream()
                 .map(FeeInstallmentPayment::getPaymentId)
                 .filter(Objects::nonNull)
@@ -1001,8 +1746,12 @@ public class FeeInstallmentServiceImpl {
         }
 
         List<FeeInstallmentPayment> savedPayments = paymentRepo.saveAll(retainedPayments);
-        if (existingReceipt != null && !savedPayments.isEmpty() && StringUtils.hasText(existingReceipt.getStorageUrl())) {
-            uploadRepo.save(buildPaymentReceiptUpload(admission, savedPayments.get(0), existingReceipt));
+        if (!savedPayments.isEmpty()) {
+            for (UploadRequest r : existingReceipts) {
+                if (r != null && StringUtils.hasText(r.getStorageUrl())) {
+                    uploadRepo.save(buildPaymentReceiptUpload(admission, savedPayments.get(0), r));
+                }
+            }
         }
 
         java.util.Set<Long> impactedInstallmentIds = new java.util.LinkedHashSet<>();
@@ -1045,7 +1794,7 @@ public class FeeInstallmentServiceImpl {
     }
 
     private FeeInstallmentPayment clonePaymentForRepair(FeeInstallmentPayment anchorPayment) {
-        return FeeInstallmentPayment.builder()
+        FeeInstallmentPayment clone = FeeInstallmentPayment.builder()
                 .paymentGroupId(anchorPayment.getPaymentGroupId())
                 .paymentMode(anchorPayment.getPaymentMode())
                 .txnRef(anchorPayment.getTxnRef())
@@ -1057,17 +1806,148 @@ public class FeeInstallmentServiceImpl {
                 .verifiedAt(anchorPayment.getVerifiedAt())
                 .isAccountHeadVerified(anchorPayment.getIsAccountHeadVerified())
                 .accountHeadVerifiedAt(anchorPayment.getAccountHeadVerifiedAt())
+                .rejectionReason(anchorPayment.getRejectionReason())
+                .rejectedBy(anchorPayment.getRejectedBy())
+                .rejectedAt(anchorPayment.getRejectedAt())
+                .accountHeadRejectionReason(anchorPayment.getAccountHeadRejectionReason())
+                .accountHeadRejectedBy(anchorPayment.getAccountHeadRejectedBy())
+                .accountHeadRejectedAt(anchorPayment.getAccountHeadRejectedAt())
                 .paidOn(anchorPayment.getPaidOn())
                 .build();
+        // Preserve ordering expectations when we need to add extra allocations during repair.
+        clone.setCreatedAt(anchorPayment.getCreatedAt());
+        return clone;
+    }
+
+    public boolean isAccountHeadRejected(FeeInstallmentPayment payment) {
+        return isAccountHeadRejectedInternal(payment);
+    }
+
+    private boolean isHoRejected(FeeInstallmentPayment payment) {
+        if (payment == null) {
+            return false;
+        }
+        return StringUtils.hasText(payment.getStatus()) && "Rejected".equalsIgnoreCase(payment.getStatus());
+    }
+
+    private boolean isAccountHeadRejectedInternal(FeeInstallmentPayment payment) {
+        if (payment == null || Boolean.TRUE.equals(payment.getIsAccountHeadVerified())) {
+            return false;
+        }
+        if (StringUtils.hasText(payment.getAccountHeadRejectionReason())
+                && payment.getAccountHeadRejectedAt() != null) {
+            return true;
+        }
+        // Fallback for legacy rows stored before dedicated AH rejection columns existed.
+        if (StringUtils.hasText(payment.getStatus()) && "Account Head Rejected".equalsIgnoreCase(payment.getStatus())) {
+            return true;
+        }
+        return StringUtils.hasText(payment.getRejectionReason())
+                && payment.getRejectedAt() != null
+                && !isHoRejected(payment);
     }
 
     private record ExpectedNegativeAllocation(FeeInstallment installment, BigDecimal amount) {}
+    private record ExpectedPositiveAllocation(FeeInstallment installment, BigDecimal amount) {}
+
+    private void repairPositivePaymentGroup(List<FeeInstallmentPayment> groupPayments,
+                                           List<ExpectedPositiveAllocation> expectedAllocations,
+                                           List<FeeInstallment> admissionInstallments) {
+        if (groupPayments == null || groupPayments.isEmpty() || expectedAllocations == null || expectedAllocations.isEmpty()) {
+            return;
+        }
+        List<FeeInstallmentPayment> sortedGroupPayments = groupPayments.stream()
+                .filter(Objects::nonNull)
+                .sorted(this::comparePaymentSequence)
+                .collect(Collectors.toCollection(ArrayList::new));
+        FeeInstallmentPayment anchorPayment = sortedGroupPayments.get(0);
+        FeeInstallment anchorInstallment = anchorPayment.getInstallment();
+        Admission2 admission = anchorInstallment != null ? anchorInstallment.getAdmission() : null;
+        if (admission == null) {
+            return;
+        }
+
+        List<FeeInstallment> effectiveInstallments = admissionInstallments != null && !admissionInstallments.isEmpty()
+                ? admissionInstallments
+                : installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admission.getAdmissionId());
+        Map<Long, Map<String, Object>> beforeInstallments = snapshotInstallments(effectiveInstallments);
+        List<UploadRequest> existingReceipts = captureExistingReceipts(sortedGroupPayments, admission);
+        List<Long> oldPaymentIds = sortedGroupPayments.stream()
+                .map(FeeInstallmentPayment::getPaymentId)
+                .filter(Objects::nonNull)
+                .toList();
+        List<FileUpload> oldUploads = oldPaymentIds.isEmpty()
+                ? List.of()
+                : uploadRepo.findByInstallmentPayment_PaymentIdIn(oldPaymentIds);
+        List<FeeInvoice> oldInvoices = oldPaymentIds.isEmpty()
+                ? List.of()
+                : invoiceRepo.findByPayment_PaymentIdIn(oldPaymentIds);
+        boolean hadGroupInvoice = oldInvoices.stream()
+                .anyMatch(invoice -> InvoiceServiceImpl.isPaymentGroupInvoiceNumber(invoice.getInvoiceNumber()));
+
+        if (!oldUploads.isEmpty()) {
+            uploadRepo.deleteAll(oldUploads);
+        }
+        if (!oldInvoices.isEmpty()) {
+            for (FeeInvoice invoice : oldInvoices) {
+                safeDeleteLocalFile(invoice.getFilePath());
+            }
+            invoiceRepo.deleteAll(oldInvoices);
+        }
+
+        List<FeeInstallmentPayment> retainedPayments = new ArrayList<>();
+        for (int i = 0; i < expectedAllocations.size(); i++) {
+            ExpectedPositiveAllocation allocation = expectedAllocations.get(i);
+            FeeInstallmentPayment payment;
+            if (i < sortedGroupPayments.size()) {
+                payment = sortedGroupPayments.get(i);
+            } else {
+                payment = clonePaymentForRepair(anchorPayment);
+            }
+            payment.setInstallment(allocation.installment());
+            payment.setAmount(allocation.amount());
+            retainedPayments.add(payment);
+        }
+
+        if (sortedGroupPayments.size() > expectedAllocations.size()) {
+            List<FeeInstallmentPayment> extraPayments = sortedGroupPayments.subList(expectedAllocations.size(), sortedGroupPayments.size());
+            if (!extraPayments.isEmpty()) {
+                paymentRepo.deleteAll(extraPayments);
+            }
+        }
+
+        List<FeeInstallmentPayment> savedPayments = paymentRepo.saveAll(retainedPayments);
+        if (!savedPayments.isEmpty()) {
+            for (UploadRequest r : existingReceipts) {
+                if (r != null && StringUtils.hasText(r.getStorageUrl())) {
+                    uploadRepo.save(buildPaymentReceiptUpload(admission, savedPayments.get(0), r));
+                }
+            }
+        }
+        if (hadGroupInvoice) {
+            ensurePaymentGroupInvoice(anchorPayment.getPaymentGroupId());
+        }
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("paymentGroupId", anchorPayment.getPaymentGroupId());
+        details.put("amount", sumPaymentAmounts(savedPayments));
+        details.put("allocationCountBefore", sortedGroupPayments.size());
+        details.put("allocationCountAfter", savedPayments.size());
+        details.put("systemAction", "POSITIVE_PAYMENT_GROUP_REALLOCATED");
+
+        Map<String, Object> changedFields = buildInstallmentDiffPayload(
+                beforeInstallments,
+                installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admission.getAdmissionId())
+        );
+        addChange(changedFields, "paymentGroup.repaired", false, true);
+        admissionAuditService.record(admission, "POSITIVE_PAYMENT_GROUP_REALLOCATED", "SYSTEM", details, changedFields);
+    }
 
     private List<FeeInstallmentPayment> applyPaymentGroupAllocations(Admission2 admission,
                                                                      PartialPaymentRequest request,
                                                                      String role,
                                                                      String paymentGroupId,
-                                                                     UploadRequest receipt) {
+                                                                     List<UploadRequest> receipts) {
         List<FeeInstallment> installments = installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(
                 admission.getAdmissionId());
         if (installments.isEmpty()) {
@@ -1077,10 +1957,13 @@ public class FeeInstallmentServiceImpl {
         if (StringUtils.hasText(request.getMode())) {
             paymentMode = paymentModeService.getByMode(request.getMode());
         }
+        String paymentType = normalizePaymentType(request.getPaymentType());
 
         BigDecimal remaining = request.getAmount();
         LocalDate paidOn = request.getPaidOn() != null ? request.getPaidOn() : LocalDate.now();
         List<FeeInstallmentPayment> payments = new ArrayList<>();
+        List<UploadRequest> normalizedReceipts = receipts == null ? java.util.Collections.emptyList() : receipts;
+        boolean receiptsAttached = false;
         if (remaining.compareTo(BigDecimal.ZERO) > 0) {
             for (FeeInstallment installment : installments) {
                 if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
@@ -1094,7 +1977,9 @@ public class FeeInstallmentServiceImpl {
                 }
 
                 BigDecimal applied = remaining.min(pending);
-                payments.add(createGroupedAllocation(paymentGroupId, installment, applied, paymentMode, request, role, paidOn, receipt, admission));
+                List<UploadRequest> attachHere = receiptsAttached ? java.util.Collections.emptyList() : normalizedReceipts;
+                payments.add(createGroupedAllocation(paymentGroupId, installment, applied, paymentMode, paymentType, request, role, paidOn, attachHere, admission));
+                receiptsAttached = true;
                 remaining = remaining.subtract(applied);
             }
             if (remaining.compareTo(BigDecimal.ZERO) > 0) {
@@ -1115,7 +2000,9 @@ public class FeeInstallmentServiceImpl {
                 continue;
             }
             BigDecimal applied = reversalRemaining.min(amountPaid);
-            payments.add(createGroupedAllocation(paymentGroupId, installment, applied.negate(), paymentMode, request, role, paidOn, receipt, admission));
+            List<UploadRequest> attachHere = receiptsAttached ? java.util.Collections.emptyList() : normalizedReceipts;
+            payments.add(createGroupedAllocation(paymentGroupId, installment, applied.negate(), paymentMode, paymentType, request, role, paidOn, attachHere, admission));
+            receiptsAttached = true;
             reversalRemaining = reversalRemaining.subtract(applied);
         }
         if (reversalRemaining.compareTo(BigDecimal.ZERO) > 0) {
@@ -1128,10 +2015,11 @@ public class FeeInstallmentServiceImpl {
                                                           FeeInstallment installment,
                                                           BigDecimal appliedAmount,
                                                           PaymentModeMaster paymentMode,
+                                                          String paymentType,
                                                           PartialPaymentRequest request,
                                                           String role,
                                                           LocalDate paidOn,
-                                                          UploadRequest receipt,
+                                                          List<UploadRequest> receipts,
                                                           Admission2 admission) {
         BigDecimal currentPaid = installment.getAmountPaid() == null ? BigDecimal.ZERO : installment.getAmountPaid();
         BigDecimal newPaid = currentPaid.add(appliedAmount);
@@ -1159,6 +2047,7 @@ public class FeeInstallmentServiceImpl {
                 .amount(appliedAmount)
                 .paymentGroupId(paymentGroupId)
                 .paymentMode(paymentMode)
+                .paymentType(paymentType)
                 .txnRef(request.getTxnRef())
                 .remarks(request.getRemarks())
                 .receivedBy(request.getReceivedBy())
@@ -1171,14 +2060,38 @@ public class FeeInstallmentServiceImpl {
                 .paidOn(paidOn)
                 .build();
         payment = paymentRepo.save(payment);
+        Long admissionId = admission != null ? admission.getAdmissionId() : null;
+        Long admissionBranchId = admission != null && admission.getAdmissionBranch() != null
+                ? admission.getAdmissionBranch().getId()
+                : null;
+        Long lectureBranchId = admission != null && admission.getLectureBranch() != null
+                ? admission.getLectureBranch().getId()
+                : null;
+        log.info("applyPaymentGroupAllocations saved paymentId={} admissionId={} admissionBranchId={} lectureBranchId={} installmentId={} amount={} paymentType={} modeCode={} status={} paidOn={} createdAt={} groupId={}",
+                payment.getPaymentId(),
+                admissionId,
+                admissionBranchId,
+                lectureBranchId,
+                installment.getInstallmentId(),
+                payment.getAmount(),
+                payment.getPaymentType(),
+                payment.getPaymentMode() != null ? payment.getPaymentMode().getCode() : null,
+                payment.getStatus(),
+                payment.getPaidOn(),
+                payment.getCreatedAt(),
+                payment.getPaymentGroupId());
 
         if (payment.getAmount() != null
                 && payment.getAmount().compareTo(BigDecimal.ZERO) > 0
                 && !hasAllocationInvoiceForPayment(payment.getPaymentId())) {
             invoiceService.generateInvoiceForPayment(admission, installment, payment);
         }
-        if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
-            uploadRepo.save(buildPaymentReceiptUpload(admission, payment, receipt));
+        if (receipts != null) {
+            for (UploadRequest receipt : receipts) {
+                if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
+                    uploadRepo.save(buildPaymentReceiptUpload(admission, payment, receipt));
+                }
+            }
         }
         return payment;
     }
@@ -1283,6 +2196,49 @@ public class FeeInstallmentServiceImpl {
                 .orElse(null);
     }
 
+    private String resolvePaymentType(List<FeeInstallmentPayment> payments) {
+        return payments.stream()
+                .map(FeeInstallmentPayment::getPaymentType)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private String normalizePaymentType(String paymentType) {
+        if (!StringUtils.hasText(paymentType)) {
+            throw new IllegalArgumentException("Payment type is required. Allowed values: Cash, Cheque, Online.");
+        }
+        String normalized = paymentType.trim().toLowerCase();
+        return switch (normalized) {
+            case "cash" -> "Cash";
+            case "cheque", "check" -> "Cheque";
+            case "online" -> "Online";
+            default -> throw new IllegalArgumentException("Invalid payment type. Allowed values: Cash, Cheque, Online.");
+        };
+    }
+
+    /**
+     * Best-effort mapping from a payment-mode code (e.g. "CASH", "CHEQUE-HDFC",
+     * "ONLINE-UPI") to a canonical paymentType. Returns null if the mode is
+     * blank or doesn't contain a recognisable marker. Used as a last-resort
+     * fallback during payment-group updates where legacy rows have no
+     * payment_type set.
+     */
+    private String inferPaymentTypeFromMode(String mode) {
+        if (!StringUtils.hasText(mode)) {
+            return null;
+        }
+        String upper = mode.trim().toUpperCase();
+        if (upper.contains("CASH")) {
+            return "Cash";
+        }
+        if (upper.contains("CHEQUE") || upper.contains("CHECK")) {
+            return "Cheque";
+        }
+        // Treat any other recognisable mode (UPI, NEFT, IMPS, A/C, etc.) as Online.
+        return "Online";
+    }
+
     private LocalDate resolvePaidOn(List<FeeInstallmentPayment> payments) {
         return payments.stream()
                 .map(FeeInstallmentPayment::getPaidOn)
@@ -1347,6 +2303,95 @@ public class FeeInstallmentServiceImpl {
             installment.setPaidOn(latestPaidOn);
         }
         installmentRepo.save(installment);
+    }
+
+    private void recalculateAdmissionInstallmentsFromPayments(Long admissionId, List<FeeInstallmentPayment> admissionPayments) {
+        if (admissionId == null) {
+            return;
+        }
+        List<FeeInstallment> installments =
+                installmentRepo.findByAdmissionAdmissionIdOrderByStudyYearAscInstallmentNoAsc(admissionId);
+        if (installments.isEmpty()) {
+            return;
+        }
+
+        Map<Long, List<FeeInstallmentPayment>> paymentsByInstallment = new LinkedHashMap<>();
+        if (admissionPayments != null) {
+            for (FeeInstallmentPayment payment : admissionPayments) {
+                if (payment == null || payment.getInstallment() == null || payment.getInstallment().getInstallmentId() == null) {
+                    continue;
+                }
+                paymentsByInstallment
+                        .computeIfAbsent(payment.getInstallment().getInstallmentId(), id -> new ArrayList<>())
+                        .add(payment);
+            }
+        }
+
+        for (FeeInstallment installment : installments) {
+            List<FeeInstallmentPayment> payments = paymentsByInstallment.getOrDefault(installment.getInstallmentId(), List.of());
+            java.math.BigDecimal totalPaid = java.math.BigDecimal.ZERO;
+            java.math.BigDecimal verifiedPaid = java.math.BigDecimal.ZERO;
+            boolean hasUnverified = false;
+            LocalDate latestPaidOn = null;
+            for (FeeInstallmentPayment payment : payments) {
+                java.math.BigDecimal amt = payment.getAmount() != null ? payment.getAmount() : java.math.BigDecimal.ZERO;
+                totalPaid = totalPaid.add(amt);
+                if (Boolean.TRUE.equals(payment.getIsVerified())) {
+                    verifiedPaid = verifiedPaid.add(amt);
+                } else {
+                    hasUnverified = true;
+                }
+                if (payment.getPaidOn() != null && (latestPaidOn == null || payment.getPaidOn().isAfter(latestPaidOn))) {
+                    latestPaidOn = payment.getPaidOn();
+                }
+            }
+
+            // Only write if something actually changes, to reduce unnecessary updates.
+            boolean changed = false;
+            if (installment.getAmountPaid() == null || installment.getAmountPaid().compareTo(totalPaid) != 0) {
+                installment.setAmountPaid(totalPaid);
+                changed = true;
+            }
+
+            java.math.BigDecimal amountDue = installment.getAmountDue() != null ? installment.getAmountDue() : java.math.BigDecimal.ZERO;
+            String nextStatus;
+            boolean nextVerified;
+            LocalDate nextPaidOn;
+            if (totalPaid.compareTo(java.math.BigDecimal.ZERO) <= 0) {
+                nextStatus = "Un Paid";
+                nextVerified = false;
+                nextPaidOn = null;
+            } else if (hasUnverified) {
+                nextStatus = "Under Verification";
+                nextVerified = false;
+                nextPaidOn = latestPaidOn;
+            } else if (verifiedPaid.compareTo(amountDue) >= 0 && amountDue.compareTo(java.math.BigDecimal.ZERO) > 0) {
+                nextStatus = "Paid";
+                nextVerified = true;
+                nextPaidOn = latestPaidOn;
+            } else {
+                nextStatus = "Partial Received";
+                nextVerified = verifiedPaid.compareTo(java.math.BigDecimal.ZERO) > 0;
+                nextPaidOn = latestPaidOn;
+            }
+
+            if (!java.util.Objects.equals(installment.getStatus(), nextStatus)) {
+                installment.setStatus(nextStatus);
+                changed = true;
+            }
+            if (!java.util.Objects.equals(installment.getIsVerified(), nextVerified)) {
+                installment.setIsVerified(nextVerified);
+                changed = true;
+            }
+            if (!java.util.Objects.equals(installment.getPaidOn(), nextPaidOn)) {
+                installment.setPaidOn(nextPaidOn);
+                changed = true;
+            }
+
+            if (changed) {
+                installmentRepo.save(installment);
+            }
+        }
     }
 
     private void addChange(Map<String, Object> changes, String field, Object before, Object after) {

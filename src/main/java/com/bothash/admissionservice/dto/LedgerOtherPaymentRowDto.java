@@ -1,20 +1,29 @@
 package com.bothash.admissionservice.dto;
 
-import lombok.Builder;
-import lombok.Getter;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-@Getter
-@Builder
-public class AdmissionOtherPaymentDto {
+import lombok.Data;
+
+@Data
+public class LedgerOtherPaymentRowDto {
     private Long paymentId;
     private Long admissionId;
+    private Long studentId;
+    private String studentName;
+    private String absId;
+    private String mobile;
+    private Long branchId;
+    private String branchName;
+    private Long courseId;
+    private String courseName;
+    private String batch;
+    private String academicYear;
+
+    private LocalDate paidOn;
     private BigDecimal amount;
     private BigDecimal returnedAmount;
     private BigDecimal netAmount;
-    private LocalDate paidOn;
     private String paymentMode;
     private String paymentType;
     private String txnRef;

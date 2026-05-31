@@ -4,6 +4,7 @@ import java.util.List;
 import java.time.LocalDate;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -41,8 +42,11 @@ public class MiscPaymentService {
     public MiscPaymentDto create(MiscPaymentRequest request) {
         validate(request);
 
-        Course course = courseRepository.findById(request.getCourseId())
-                .orElseThrow(() -> new IllegalArgumentException("Selected course does not exist."));
+        Course course = null;
+        if (request.getCourseId() != null) {
+            course = courseRepository.findById(request.getCourseId())
+                    .orElseThrow(() -> new IllegalArgumentException("Selected course does not exist."));
+        }
 
         if (paymentModeService.findByCode(request.getPaymentMode()).isEmpty()) {
             throw new IllegalArgumentException("Selected payment mode does not exist.");
@@ -50,14 +54,15 @@ public class MiscPaymentService {
 
         MiscPayment payment = MiscPayment.builder()
                 .studentName(trimToNull(request.getStudentName()))
-                .contactNumber(trimToNull(request.getContactNumber()))
-                .batch(trimToNull(request.getBatch()))
-                .courseId(course.getCourseId())
-                .courseName(course.getName())
-                .collegeName(trimToNull(request.getCollegeName()))
+                .contactNumber(normalizeOptionalLegacyText(request.getContactNumber()))
+                .batch(normalizeOptionalLegacyText(request.getBatch()))
+                .courseId(course != null ? course.getCourseId() : null)
+                .courseName(normalizeOptionalCourseName(course))
+                .collegeName(normalizeOptionalLegacyText(request.getCollegeName()))
                 .feeType(trimToNull(request.getFeeType()))
                 .amount(request.getAmount())
                 .paymentMode(trimToNull(request.getPaymentMode()))
+                .paymentType(normalizePaymentType(request.getPaymentType()))
                 .paymentDate(request.getPaymentDate())
                 .remark(trimToNull(request.getRemark()))
                 .createdBy(trimToNull(request.getCreatedBy()))
@@ -79,22 +84,26 @@ public class MiscPaymentService {
         MiscPayment existing = miscPaymentRepository.findById(paymentId)
                 .orElseThrow(() -> new IllegalArgumentException("Miscellaneous payment not found."));
 
-        Course course = courseRepository.findById(request.getCourseId())
-                .orElseThrow(() -> new IllegalArgumentException("Selected course does not exist."));
+        Course course = null;
+        if (request.getCourseId() != null) {
+            course = courseRepository.findById(request.getCourseId())
+                    .orElseThrow(() -> new IllegalArgumentException("Selected course does not exist."));
+        }
 
         if (paymentModeService.findByCode(request.getPaymentMode()).isEmpty()) {
             throw new IllegalArgumentException("Selected payment mode does not exist.");
         }
 
         existing.setStudentName(trimToNull(request.getStudentName()));
-        existing.setContactNumber(trimToNull(request.getContactNumber()));
-        existing.setBatch(trimToNull(request.getBatch()));
-        existing.setCourseId(course.getCourseId());
-        existing.setCourseName(course.getName());
-        existing.setCollegeName(trimToNull(request.getCollegeName()));
+        existing.setContactNumber(normalizeOptionalLegacyText(request.getContactNumber()));
+        existing.setBatch(normalizeOptionalLegacyText(request.getBatch()));
+        existing.setCourseId(course != null ? course.getCourseId() : null);
+        existing.setCourseName(normalizeOptionalCourseName(course));
+        existing.setCollegeName(normalizeOptionalLegacyText(request.getCollegeName()));
         existing.setFeeType(trimToNull(request.getFeeType()));
         existing.setAmount(request.getAmount());
         existing.setPaymentMode(trimToNull(request.getPaymentMode()));
+        existing.setPaymentType(normalizePaymentType(request.getPaymentType()));
         existing.setPaymentDate(request.getPaymentDate());
         existing.setRemark(trimToNull(request.getRemark()));
         existing.setCreatedBy(trimToNull(request.getCreatedBy()));
@@ -166,11 +175,12 @@ public class MiscPaymentService {
                 .contactNumber(payment.getContactNumber())
                 .batch(payment.getBatch())
                 .courseId(payment.getCourseId())
-                .courseName(payment.getCourseName())
+                .courseName(blankToNull(payment.getCourseName()))
                 .collegeName(payment.getCollegeName())
                 .feeType(payment.getFeeType())
                 .amount(payment.getAmount())
                 .paymentMode(payment.getPaymentMode())
+                .paymentType(payment.getPaymentType())
                 .paymentDate(payment.getPaymentDate())
                 .receiptName(payment.getReceiptName())
                 .receiptUrl(payment.getReceiptStorageUrl())
@@ -200,21 +210,27 @@ public class MiscPaymentService {
         return value.trim();
     }
 
+    private String blankToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeOptionalCourseName(Course course) {
+        return course != null && StringUtils.hasText(course.getName()) ? course.getName().trim() : "";
+    }
+
+    private String normalizeOptionalLegacyText(String value) {
+        return StringUtils.hasText(value) ? value.trim() : "";
+    }
+
     private void validate(MiscPaymentRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("Request body is required.");
         }
         if (!StringUtils.hasText(request.getStudentName())) {
-            throw new IllegalArgumentException("Student name is required.");
+            throw new IllegalArgumentException("Name is required.");
         }
-        if (!StringUtils.hasText(request.getContactNumber()) || !request.getContactNumber().trim().matches("^[6-9][0-9]{9}$")) {
+        if (StringUtils.hasText(request.getContactNumber()) && !request.getContactNumber().trim().matches("^[6-9][0-9]{9}$")) {
             throw new IllegalArgumentException("Contact number must be a valid 10 digit mobile number.");
-        }
-        if (!StringUtils.hasText(request.getBatch())) {
-            throw new IllegalArgumentException("Batch is required.");
-        }
-        if (request.getCourseId() == null) {
-            throw new IllegalArgumentException("Course is required.");
         }
         if (!StringUtils.hasText(request.getFeeType())) {
             throw new IllegalArgumentException("Fees type is required.");
@@ -225,9 +241,25 @@ public class MiscPaymentService {
         if (!StringUtils.hasText(request.getPaymentMode())) {
             throw new IllegalArgumentException("Payment mode is required.");
         }
+        if (!StringUtils.hasText(request.getPaymentType())) {
+            throw new IllegalArgumentException("Payment type is required.");
+        }
         if (request.getPaymentDate() == null) {
             throw new IllegalArgumentException("Payment date is required.");
         }
+    }
+
+    private String normalizePaymentType(String paymentType) {
+        if (!StringUtils.hasText(paymentType)) {
+            throw new IllegalArgumentException("Payment type is required. Allowed values: Cash, Cheque, Online.");
+        }
+        String normalized = paymentType.trim().toLowerCase(Locale.ENGLISH);
+        return switch (normalized) {
+            case "cash" -> "Cash";
+            case "cheque", "check" -> "Cheque";
+            case "online" -> "Online";
+            default -> throw new IllegalArgumentException("Invalid payment type. Allowed values: Cash, Cheque, Online.");
+        };
     }
 
     private Specification<MiscPayment> keywordLike(String q) {
