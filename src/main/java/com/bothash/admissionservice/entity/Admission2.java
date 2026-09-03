@@ -128,6 +128,16 @@ public class Admission2 extends Auditable {
     @Column(name = "branch_approved", nullable = false, columnDefinition = "boolean default false")
     private Boolean branchApproved = false;
 
+    /**
+     * Temporary admissions are excluded from fees overview and dashboard views.
+     * Auto-cleared to false when HO promotes the record to ADMITTED. Users can
+     * also flip it to false from admission-view, but the flag is irreversible
+     * once cleared (see AdmissionFormController#setTemporaryAdmissionFlag).
+     */
+    @Column(name = "temporary_admission", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean temporaryAdmission = false;
+
     @Column(name = "branch_approved_by", length = 120)
     private String branchApprovedBy;
 

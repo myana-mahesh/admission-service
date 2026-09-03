@@ -30,4 +30,5 @@ public class FeeLedgerRowDto {
     private String statusSummary;
     private Boolean hasSchedule;
     private Long scheduleCount;
+    private Boolean temporaryAdmission;
 }

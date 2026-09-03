@@ -24,6 +24,7 @@ import com.bothash.admissionservice.dto.BranchCashbookExpenseDto;
 import com.bothash.admissionservice.dto.BranchCashbookExpenseRequest;
 import com.bothash.admissionservice.dto.BranchCashbookExpenseUpdateRequest;
 import com.bothash.admissionservice.dto.BranchPettyCashAddRequest;
+import com.bothash.admissionservice.dto.BranchPettyCashInitialRequest;
 import com.bothash.admissionservice.dto.BranchPettyCashReturnRequest;
 import com.bothash.admissionservice.dto.BranchRemittanceDetailDto;
 import com.bothash.admissionservice.dto.BranchRemittanceHistoryDto;
@@ -34,6 +35,7 @@ import com.bothash.admissionservice.entity.BranchCashbookDay;
 import com.bothash.admissionservice.entity.BranchCashbookExpense;
 import com.bothash.admissionservice.entity.BranchMaster;
 import com.bothash.admissionservice.entity.BranchCashbookRemittance;
+import com.bothash.admissionservice.entity.BranchRemittancePayment;
 import com.bothash.admissionservice.entity.FeeInstallmentPayment;
 import com.bothash.admissionservice.repository.BranchCashbookDayRepository;
 import com.bothash.admissionservice.repository.BranchCashbookExpenseRepository;
@@ -54,6 +56,8 @@ public class BranchCollectionService {
     private final BranchCashbookDayRepository cashbookDayRepository;
     private final BranchCashbookExpenseRepository expenseRepository;
     private final BranchCashbookRemittanceRepository remittanceRepository;
+    private final com.bothash.admissionservice.repository.BranchRemittancePaymentRepository remittancePaymentRepository;
+    private final com.bothash.admissionservice.repository.BranchRemittanceAcknowledgmentRepository remittanceAcknowledgmentRepository;
     private final FeeInstallmentPaymentRepository paymentRepository;
     private final com.bothash.admissionservice.repository.FeePaymentAllocationRepository allocationRepository;
 
@@ -62,7 +66,7 @@ public class BranchCollectionService {
         if (branchId == null) {
             throw new IllegalArgumentException("Branch is required.");
         }
-        LocalDate date = businessDate != null ? businessDate : LocalDate.now();
+        LocalDate date = businessDate != null ? businessDate : LocalDate.now(BUSINESS_ZONE);
         BranchMaster branch = branchRepository.findById(branchId)
                 .orElseThrow(() -> new IllegalArgumentException("Branch not found."));
 
@@ -183,8 +187,15 @@ public class BranchCollectionService {
                         .notes(cashbook != null ? cashbook.getNotes() : null)
                         .build())
                 .collections(items)
+                // The expense panel is scoped to the selected business date
+                // only — yesterday's entries belong to yesterday's view. The
+                // KPI tile / remit math still reflects the whole cycle via
+                // cycleExpenseTotal above, that's intentional.
                 .expenses(expensesList.stream()
                         .filter(ex -> !"PETTY_TOPUP".equalsIgnoreCase(ex.getSourceType()))
+                        .filter(ex -> !"PETTY_INITIAL".equalsIgnoreCase(ex.getSourceType()))
+                        .filter(ex -> ex.getCashbookDay() != null
+                                && date.equals(ex.getCashbookDay().getBusinessDate()))
                         .map(this::toExpenseDto)
                         .toList())
                 .build();
@@ -195,7 +206,7 @@ public class BranchCollectionService {
         if (request == null || request.getBranchId() == null) {
             throw new IllegalArgumentException("Branch is required.");
         }
-        LocalDate date = request.getBusinessDate() != null ? request.getBusinessDate() : LocalDate.now();
+        LocalDate date = request.getBusinessDate() != null ? request.getBusinessDate() : LocalDate.now(BUSINESS_ZONE);
         BranchMaster branch = branchRepository.findById(request.getBranchId())
                 .orElseThrow(() -> new IllegalArgumentException("Branch not found."));
 
@@ -216,34 +227,48 @@ public class BranchCollectionService {
             throw new IllegalArgumentException("Petty cash cannot be negative.");
         }
 
-        // New flow: remittance is driven by the explicit list of selected payment
-        // IDs. The amount sent = sum of those payments' amounts.
-        List<Long> paymentIds = request.getPaymentIds() == null
-                ? List.of()
-                : request.getPaymentIds().stream().filter(java.util.Objects::nonNull).distinct().toList();
+        com.bothash.admissionservice.enumpackage.RemittanceSource source =
+                resolveRemittanceSource(request.getSource());
 
         BigDecimal sent = BigDecimal.ZERO;
         List<FeeInstallmentPayment> selectedPayments = List.of();
-        if (!paymentIds.isEmpty()) {
-            selectedPayments = paymentRepository.findAllById(paymentIds);
-            if (selectedPayments.size() != paymentIds.size()) {
-                throw new IllegalArgumentException("One or more selected payments could not be found.");
+        if (source == com.bothash.admissionservice.enumpackage.RemittanceSource.PETTY_CASH) {
+            sent = amountOrZero(request.getPettyRemitAmount());
+            if (sent.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal availablePetty = resolveGlobalPettyBalance(branch.getId(), date);
+                if (sent.compareTo(availablePetty) > 0) {
+                    throw new IllegalArgumentException(
+                            "Petty cash remittance exceeds available balance ("
+                                    + availablePetty.toPlainString() + ").");
+                }
             }
-            for (FeeInstallmentPayment p : selectedPayments) {
-                if (p.getRemittanceId() != null) {
-                    throw new IllegalArgumentException("One or more selected payments are already remitted.");
+        } else {
+            // Collection flow: remittance is driven by the explicit list of selected
+            // payment IDs. The amount sent = sum of those payments' amounts.
+            List<Long> paymentIds = request.getPaymentIds() == null
+                    ? List.of()
+                    : request.getPaymentIds().stream().filter(java.util.Objects::nonNull).distinct().toList();
+            if (!paymentIds.isEmpty()) {
+                selectedPayments = paymentRepository.findAllById(paymentIds);
+                if (selectedPayments.size() != paymentIds.size()) {
+                    throw new IllegalArgumentException("One or more selected payments could not be found.");
                 }
-                Long ownerBranchId = p.getInstallment() != null
-                        && p.getInstallment().getAdmission() != null
-                        && p.getInstallment().getAdmission().getAdmissionBranch() != null
-                        ? p.getInstallment().getAdmission().getAdmissionBranch().getId()
-                        : null;
-                if (ownerBranchId == null || !ownerBranchId.equals(branch.getId())) {
-                    throw new IllegalArgumentException("One or more selected payments do not belong to this branch.");
+                for (FeeInstallmentPayment p : selectedPayments) {
+                    if (p.getRemittanceId() != null) {
+                        throw new IllegalArgumentException("One or more selected payments are already remitted.");
+                    }
+                    Long ownerBranchId = p.getInstallment() != null
+                            && p.getInstallment().getAdmission() != null
+                            && p.getInstallment().getAdmission().getLectureBranch() != null
+                            ? p.getInstallment().getAdmission().getLectureBranch().getId()
+                            : null;
+                    if (ownerBranchId == null || !ownerBranchId.equals(branch.getId())) {
+                        throw new IllegalArgumentException("One or more selected payments do not belong to this branch.");
+                    }
+                    // Remit only what's still available on each fee: original
+                    // amount minus what's already been allocated to expenses/petty.
+                    sent = sent.add(remainingOf(p));
                 }
-                // Remit only what's still available on each fee: original
-                // amount minus what's already been allocated to expenses/petty.
-                sent = sent.add(remainingOf(p));
             }
         }
 
@@ -269,6 +294,7 @@ public class BranchCollectionService {
             remittance.setSentBy(trimToNull(request.getSentToHoBy()));
             remittance.setSentAt(remittedAt != null ? remittedAt : OffsetDateTime.now());
             remittance.setNotes(trimToNull(request.getNotes()));
+            remittance.setSource(source);
             remittance = remittanceRepository.save(remittance);
 
             // Stamp every selected payment with the new remittance id so the
@@ -287,10 +313,25 @@ public class BranchCollectionService {
                 p.setRemittanceId(remittance.getId());
                 p.setConsumedAmount(amountOrZero(p.getAmount()));
                 paymentRepository.save(p);
+                // Snapshot association: survives a future HO reject so the
+                // history-detail view can still list the original payments.
+                remittancePaymentRepository.save(
+                        new BranchRemittancePayment(remittance, p.getPaymentId()));
             }
         }
 
         return getDaily(branch.getId(), date).getSummary();
+    }
+
+    private com.bothash.admissionservice.enumpackage.RemittanceSource resolveRemittanceSource(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return com.bothash.admissionservice.enumpackage.RemittanceSource.COLLECTION;
+        }
+        try {
+            return com.bothash.admissionservice.enumpackage.RemittanceSource.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Unknown remittance source: " + raw);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -312,14 +353,7 @@ public class BranchCollectionService {
         Page<BranchCashbookRemittance> result = remittanceRepository
                 .findByBranch_IdOrderBySentAtDescIdDesc(branchId, PageRequest.of(safePage, safeSize));
         List<BranchRemittanceHistoryDto> content = result.getContent().stream()
-                .map(remit -> BranchRemittanceHistoryDto.builder()
-                        .id(remit.getId())
-                        .businessDate(remit.getBusinessDate() != null ? remit.getBusinessDate().toString() : null)
-                        .sentAmount(amountOrZero(remit.getSentAmount()))
-                        .sentBy(remit.getSentBy())
-                        .sentAt(remit.getSentAt())
-                        .notes(remit.getNotes())
-                        .build())
+                .map(this::toHistoryDto)
                 .toList();
         return PagedResponse.<BranchRemittanceHistoryDto>builder()
                 .content(content)
@@ -360,14 +394,7 @@ public class BranchCollectionService {
                     .max(OffsetDateTime::compareTo)
                     .orElse(null);
             List<BranchRemittanceHistoryDto> history = rows.stream()
-                    .map(r -> BranchRemittanceHistoryDto.builder()
-                            .id(r.getId())
-                            .businessDate(r.getBusinessDate() != null ? r.getBusinessDate().toString() : null)
-                            .sentAmount(amountOrZero(r.getSentAmount()))
-                            .sentBy(r.getSentBy())
-                            .sentAt(r.getSentAt())
-                            .notes(r.getNotes())
-                            .build())
+                    .map(this::toHistoryDto)
                     .toList();
             groups.add(BranchRemittancesGroupDto.builder()
                     .branchId(branch.getId())
@@ -420,11 +447,29 @@ public class BranchCollectionService {
         final LocalDate startDate = cycleStart;
         final LocalDate endDate = cycleEnd;
 
-        // Prefer the explicit selection tagged with remittance_id (new flow).
-        // Fall back to cycle-window math for pre-migration remittances where
-        // no payments were stamped.
-        List<FeeInstallmentPayment> taggedPayments =
-                paymentRepository.findByRemittanceIdOrderByCreatedAtAscPaymentIdAsc(remittance.getId());
+        // Prefer the snapshot table (survives HO reject which releases the
+        // live remittance_id). Fall back to live remittance_id for legacy
+        // rows that pre-date the snapshot. Final fallback: cycle-window
+        // math for pre-migration remittances that were never stamped.
+        List<Long> snapshotPaymentIds = remittancePaymentRepository
+                .findByRemittance_IdOrderByIdAsc(remittance.getId()).stream()
+                .map(BranchRemittancePayment::getPaymentId)
+                .toList();
+        List<FeeInstallmentPayment> taggedPayments;
+        if (!snapshotPaymentIds.isEmpty()) {
+            taggedPayments = paymentRepository.findAllById(snapshotPaymentIds);
+            // findAllById doesn't guarantee order; restore createdAt / paymentId order
+            taggedPayments = new java.util.ArrayList<>(taggedPayments);
+            taggedPayments.sort((a, b) -> {
+                int cmp = java.util.Objects.compare(a.getCreatedAt(), b.getCreatedAt(),
+                        java.util.Comparator.nullsLast(OffsetDateTime::compareTo));
+                if (cmp != 0) return cmp;
+                return java.util.Objects.compare(a.getPaymentId(), b.getPaymentId(),
+                        java.util.Comparator.nullsLast(Long::compareTo));
+            });
+        } else {
+            taggedPayments = paymentRepository.findByRemittanceIdOrderByCreatedAtAscPaymentIdAsc(remittance.getId());
+        }
         List<FeeInstallmentPayment> collections;
         if (!taggedPayments.isEmpty()) {
             collections = taggedPayments;
@@ -524,6 +569,12 @@ public class BranchCollectionService {
                 .sentBy(remittance.getSentBy())
                 .sentAt(remittance.getSentAt())
                 .notes(remittance.getNotes())
+                .status(remittance.getStatus())
+                .handlerName(remittance.getHandlerName())
+                .handlerRemark(remittance.getHandlerRemark())
+                .handledBy(remittance.getHandledBy())
+                .handledAt(remittance.getHandledAt())
+                .source(remittance.getSource() != null ? remittance.getSource().name() : null)
                 .collections(groupCollectionsForDisplay(collections))
                 .expenses(expenseEntries.stream()
                         .filter(ex -> "COLLECTION".equalsIgnoreCase(ex.getSourceType())
@@ -532,9 +583,177 @@ public class BranchCollectionService {
                         .toList())
                 .pettyTransactions(expenseEntries.stream()
                         .filter(ex -> "PETTY_TOPUP".equalsIgnoreCase(ex.getSourceType())
-                                || "PETTY_RETURN".equalsIgnoreCase(ex.getSourceType()))
+                                || "PETTY_RETURN".equalsIgnoreCase(ex.getSourceType())
+                                || "PETTY_INITIAL".equalsIgnoreCase(ex.getSourceType()))
                         .map(this::toExpenseDto)
                         .toList())
+                .build();
+    }
+
+    // -------- HO accept / reject -------------------------------------------
+
+    @Transactional
+    public BranchRemittanceDetailDto acceptRemittance(Long remittanceId,
+                                                      String handlerName,
+                                                      String handlerRemark,
+                                                      String actor) {
+        BranchCashbookRemittance remittance = remittanceRepository.findById(remittanceId)
+                .orElseThrow(() -> new IllegalArgumentException("Remittance not found."));
+        if (!org.springframework.util.StringUtils.hasText(handlerName)) {
+            throw new IllegalArgumentException("Handler name is required.");
+        }
+        if (!"PENDING".equalsIgnoreCase(remittance.getStatus())) {
+            throw new IllegalArgumentException("This remittance has already been " + remittance.getStatus().toLowerCase() + ".");
+        }
+        remittance.setStatus("ACCEPTED");
+        remittance.setHandlerName(handlerName.trim());
+        remittance.setHandlerRemark(trimToNull(handlerRemark));
+        remittance.setHandledBy(actor);
+        remittance.setHandledAt(java.time.OffsetDateTime.now());
+        remittanceRepository.save(remittance);
+        Long branchId = remittance.getBranch() != null ? remittance.getBranch().getId() : null;
+        return getRemittanceDetail(branchId, remittanceId);
+    }
+
+    @Transactional
+    public BranchRemittanceDetailDto rejectRemittance(Long remittanceId,
+                                                      String handlerName,
+                                                      String handlerRemark,
+                                                      String actor) {
+        BranchCashbookRemittance remittance = remittanceRepository.findById(remittanceId)
+                .orElseThrow(() -> new IllegalArgumentException("Remittance not found."));
+        if (!org.springframework.util.StringUtils.hasText(handlerName)) {
+            throw new IllegalArgumentException("Handler name is required.");
+        }
+        if (!org.springframework.util.StringUtils.hasText(handlerRemark)) {
+            throw new IllegalArgumentException("Remark is required when rejecting.");
+        }
+        if (!"PENDING".equalsIgnoreCase(remittance.getStatus())) {
+            throw new IllegalArgumentException("This remittance has already been " + remittance.getStatus().toLowerCase() + ".");
+        }
+        remittance.setStatus("REJECTED");
+        remittance.setHandlerName(handlerName.trim());
+        remittance.setHandlerRemark(handlerRemark.trim());
+        remittance.setHandledBy(actor);
+        remittance.setHandledAt(java.time.OffsetDateTime.now());
+
+        // Release the stamped collections so the branch can fix them up and
+        // re-send. The remittance row stays with REJECTED status so the
+        // history (and the branch-side alert) keeps the audit trail. The
+        // snapshot rows in branch_remittance_payment are preserved so the
+        // detail view can still show what was originally rejected.
+        //
+        // consumedAmount was set to the full payment amount at Mark Sent
+        // time to mark the fee fully consumed. After reject we revert it
+        // to the actual allocation total (expenses + petty topups − petty
+        // returns), so the dashboard's "Rs X used" indicator drops away
+        // for fees that never had any non-remit allocations.
+        List<FeeInstallmentPayment> stamped =
+                paymentRepository.findByRemittanceIdOrderByCreatedAtAscPaymentIdAsc(remittance.getId());
+        for (FeeInstallmentPayment p : stamped) {
+            p.setRemittanceId(null);
+            BigDecimal priorAllocations = allocationRepository
+                    .findByPayment_PaymentIdOrderByCreatedAtAscIdAsc(p.getPaymentId()).stream()
+                    .map(a -> a.getAmount() != null ? a.getAmount() : BigDecimal.ZERO)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (priorAllocations.compareTo(BigDecimal.ZERO) < 0) {
+                priorAllocations = BigDecimal.ZERO;
+            }
+            p.setConsumedAmount(priorAllocations);
+        }
+        paymentRepository.saveAll(stamped);
+
+        // Roll back the cashbook day's sentToHo so the branch's KPI tile
+        // doesn't keep counting rejected money as "sent".
+        BranchCashbookDay day = cashbookDayRepository
+                .findByBranch_IdAndBusinessDate(
+                        remittance.getBranch() != null ? remittance.getBranch().getId() : null,
+                        remittance.getBusinessDate())
+                .orElse(null);
+        if (day != null) {
+            BigDecimal currentSent = amountOrZero(day.getSentToHoAmount());
+            BigDecimal returned = amountOrZero(remittance.getSentAmount());
+            BigDecimal newSent = currentSent.subtract(returned);
+            if (newSent.compareTo(BigDecimal.ZERO) < 0) {
+                newSent = BigDecimal.ZERO;
+            }
+            day.setSentToHoAmount(newSent);
+            cashbookDayRepository.save(day);
+        }
+
+        remittanceRepository.save(remittance);
+        Long branchId = remittance.getBranch() != null ? remittance.getBranch().getId() : null;
+        return getRemittanceDetail(branchId, remittanceId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<BranchRemittanceHistoryDto> listRejectedSinceLastResubmit(Long branchId, String currentUser) {
+        if (branchId == null) {
+            return List.of();
+        }
+        // Per-user notifications: show REJECTED remittances from the last
+        // 30 days that the current user hasn't explicitly acknowledged.
+        // Acknowledgment is persisted in branch_remittance_acknowledgment so
+        // it follows the user across devices.
+        java.time.OffsetDateTime since = java.time.OffsetDateTime.now().minusDays(30);
+        java.util.Set<Long> acked;
+        if (org.springframework.util.StringUtils.hasText(currentUser)) {
+            acked = remittanceAcknowledgmentRepository.findByAcknowledgedBy(currentUser).stream()
+                    .map(com.bothash.admissionservice.entity.BranchRemittanceAcknowledgment::getRemittanceId)
+                    .collect(java.util.stream.Collectors.toSet());
+        } else {
+            acked = java.util.Set.of();
+        }
+        return remittanceRepository.findByBranch_IdAndStatusAndSentAtAfterOrderBySentAtDesc(
+                        branchId, "REJECTED", since).stream()
+                .filter(r -> r.getId() == null || !acked.contains(r.getId()))
+                .map(this::toHistoryDto)
+                .toList();
+    }
+
+    @Transactional
+    public void acknowledgeRejectedRemittance(Long remittanceId, String currentUser) {
+        if (remittanceId == null) {
+            throw new IllegalArgumentException("Remittance id is required.");
+        }
+        if (!org.springframework.util.StringUtils.hasText(currentUser)) {
+            throw new IllegalArgumentException("Current user is required.");
+        }
+        // Idempotent: if a row already exists for this (remittance, user) we
+        // just return — the unique constraint would otherwise duplicate-key.
+        if (remittanceAcknowledgmentRepository
+                .findByRemittanceIdAndAcknowledgedBy(remittanceId, currentUser)
+                .isPresent()) {
+            return;
+        }
+        // Defensive: only allow acking actually-rejected remittances. Keeps
+        // accidental acks from polluting the table.
+        BranchCashbookRemittance remittance = remittanceRepository.findById(remittanceId)
+                .orElseThrow(() -> new IllegalArgumentException("Remittance not found."));
+        if (!"REJECTED".equalsIgnoreCase(remittance.getStatus())) {
+            throw new IllegalArgumentException("Only rejected remittances can be acknowledged.");
+        }
+        remittanceAcknowledgmentRepository.save(
+                new com.bothash.admissionservice.entity.BranchRemittanceAcknowledgment(
+                        remittanceId, currentUser));
+    }
+
+    private BranchRemittanceHistoryDto toHistoryDto(BranchCashbookRemittance r) {
+        return BranchRemittanceHistoryDto.builder()
+                .id(r.getId())
+                .branchId(r.getBranch() != null ? r.getBranch().getId() : null)
+                .branchName(r.getBranch() != null ? r.getBranch().getName() : null)
+                .businessDate(r.getBusinessDate() != null ? r.getBusinessDate().toString() : null)
+                .sentAmount(r.getSentAmount())
+                .sentBy(r.getSentBy())
+                .sentAt(r.getSentAt())
+                .notes(r.getNotes())
+                .status(r.getStatus())
+                .handlerName(r.getHandlerName())
+                .handlerRemark(r.getHandlerRemark())
+                .handledBy(r.getHandledBy())
+                .handledAt(r.getHandledAt())
+                .source(r.getSource() != null ? r.getSource().name() : null)
                 .build();
     }
 
@@ -580,8 +799,8 @@ public class BranchCollectionService {
         for (FeeInstallmentPayment p : orderedFees) {
             Long ownerBranchId = p.getInstallment() != null
                     && p.getInstallment().getAdmission() != null
-                    && p.getInstallment().getAdmission().getAdmissionBranch() != null
-                    ? p.getInstallment().getAdmission().getAdmissionBranch().getId() : null;
+                    && p.getInstallment().getAdmission().getLectureBranch() != null
+                    ? p.getInstallment().getAdmission().getLectureBranch().getId() : null;
             if (ownerBranchId == null || !ownerBranchId.equals(branchId)) {
                 throw new IllegalArgumentException("Selected fee does not belong to this branch.");
             }
@@ -716,7 +935,7 @@ public class BranchCollectionService {
         if (!org.springframework.util.StringUtils.hasText(request.getTitle())) {
             throw new IllegalArgumentException("Expense title is required.");
         }
-        LocalDate date = request.getBusinessDate() != null ? request.getBusinessDate() : LocalDate.now();
+        LocalDate date = request.getBusinessDate() != null ? request.getBusinessDate() : LocalDate.now(BUSINESS_ZONE);
         BranchMaster branch = branchRepository.findById(request.getBranchId())
                 .orElseThrow(() -> new IllegalArgumentException("Branch not found."));
         BranchCashbookDay day = cashbookDayRepository.findByBranch_IdAndBusinessDate(branch.getId(), date)
@@ -765,7 +984,7 @@ public class BranchCollectionService {
         if (request.getAmount() == null || request.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Petty cash amount must be greater than zero.");
         }
-        LocalDate date = request.getBusinessDate() != null ? request.getBusinessDate() : LocalDate.now();
+        LocalDate date = request.getBusinessDate() != null ? request.getBusinessDate() : LocalDate.now(BUSINESS_ZONE);
         BigDecimal availableCash = resolveAvailableCashInHand(request.getBranchId(), date);
         if (request.getAmount().compareTo(availableCash) > 0) {
             throw new IllegalArgumentException("Petty top-up cannot exceed available cash in hand.");
@@ -799,6 +1018,49 @@ public class BranchCollectionService {
         return toExpenseDto(topup);
     }
 
+    /**
+     * Records the branch's opening petty cash — money the branch already
+     * had before adopting the app. No fee allocation runs because this is
+     * not drawn from any collected fee. It contributes to the petty balance
+     * but stays out of the cycle's pettyTopupTotal (which represents
+     * collection → petty movements), so the in-hand collection math is
+     * unaffected.
+     */
+    @Transactional
+    public BranchCashbookExpenseDto addInitialPettyCash(BranchPettyCashInitialRequest request) {
+        if (request == null || request.getBranchId() == null) {
+            throw new IllegalArgumentException("Branch is required.");
+        }
+        if (request.getAmount() == null || request.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Initial petty cash amount must be greater than zero.");
+        }
+        LocalDate date = request.getBusinessDate() != null ? request.getBusinessDate() : LocalDate.now(BUSINESS_ZONE);
+        BranchMaster branch = branchRepository.findById(request.getBranchId())
+                .orElseThrow(() -> new IllegalArgumentException("Branch not found."));
+        BranchCashbookDay day = cashbookDayRepository.findByBranch_IdAndBusinessDate(branch.getId(), date)
+                .orElseGet(() -> {
+                    BranchCashbookDay created = new BranchCashbookDay();
+                    created.setBranch(branch);
+                    created.setBusinessDate(date);
+                    created.setOpeningBalance(BigDecimal.ZERO);
+                    created.setExpensesAmount(BigDecimal.ZERO);
+                    created.setPettyCashAmount(BigDecimal.ZERO);
+                    created.setSentToHoAmount(BigDecimal.ZERO);
+                    return cashbookDayRepository.save(created);
+                });
+        BranchCashbookExpense entry = new BranchCashbookExpense();
+        entry.setCashbookDay(day);
+        entry.setTitle("Opening Petty Cash");
+        entry.setNote(trimToNull(request.getNote()));
+        entry.setSourceType("PETTY_INITIAL");
+        entry.setAmount(request.getAmount());
+        entry = expenseRepository.save(entry);
+
+        day.setPettyCashAmount(resolveGlobalPettyBalance(request.getBranchId(), date));
+        cashbookDayRepository.save(day);
+        return toExpenseDto(entry);
+    }
+
     @Transactional
     public BranchCashbookExpenseDto returnPettyCashToCollection(BranchPettyCashReturnRequest request) {
         if (request == null || request.getBranchId() == null) {
@@ -807,7 +1069,7 @@ public class BranchCollectionService {
         if (request.getAmount() == null || request.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Return amount must be greater than zero.");
         }
-        LocalDate date = request.getBusinessDate() != null ? request.getBusinessDate() : LocalDate.now();
+        LocalDate date = request.getBusinessDate() != null ? request.getBusinessDate() : LocalDate.now(BUSINESS_ZONE);
         BigDecimal availablePetty = resolveGlobalPettyBalance(request.getBranchId(), date);
         if (request.getAmount().compareTo(availablePetty) > 0) {
             throw new IllegalArgumentException("Return amount exceeds available petty cash.");
@@ -872,7 +1134,7 @@ public class BranchCollectionService {
         BigDecimal oldAmount = amountOrZero(expense.getAmount());
         BigDecimal newAmount = request.getAmount();
         Long branchId = day.getBranch().getId();
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
 
         // Petty balance check (global, not cycle-bounded — petty does not reset on remittance)
         BigDecimal globalPetty = resolveGlobalPettyBalance(branchId, today);
@@ -979,7 +1241,7 @@ public class BranchCollectionService {
         Long branchId = expense.getCashbookDay().getBranch().getId();
         BranchCashbookDay latestRemit = cashbookDayRepository
                 .findFirstByBranch_IdAndBusinessDateLessThanEqualAndSentToHoAmountGreaterThanOrderByBusinessDateDesc(
-                        branchId, LocalDate.now(), BigDecimal.ZERO)
+                        branchId, LocalDate.now(BUSINESS_ZONE), BigDecimal.ZERO)
                 .orElse(null);
         if (latestRemit == null || latestRemit.getSentToHoAt() == null) {
             return;
@@ -1004,6 +1266,7 @@ public class BranchCollectionService {
                 .studentName(studentName)
                 .courseName(courseName)
                 .paymentType(payment.getPaymentType())
+                .paidOn(payment.getPaidOn())
                 .amount(amountOrZero(payment.getAmount()))
                 .txnRef(payment.getTxnRef())
                 .receivedBy(payment.getReceivedBy())
@@ -1069,6 +1332,7 @@ public class BranchCollectionService {
                     .studentName(studentName)
                     .courseName(courseName)
                     .paymentType(first.getPaymentType())
+                    .paidOn(first.getPaidOn())
                     .amount(amountOrZero(total))
                     .consumedAmount(consumed)
                     .remainingAmount(remaining)
@@ -1147,8 +1411,13 @@ public class BranchCollectionService {
                 .filter(d -> d.getId() != null)
                 .flatMap(d -> expenseRepository.findByCashbookDay_IdOrderByCreatedAtAsc(d.getId()).stream())
                 .toList();
+        // PETTY_INITIAL is the branch's pre-existing petty cash recorded
+        // before they started using the app — it adds to the balance but is
+        // NOT drawn from collection, so it doesn't show up in pettyTopupTotal
+        // (the cycle-math input that subtracts from in-hand collection).
         BigDecimal topup = entries.stream()
-                .filter(ex -> "PETTY_TOPUP".equalsIgnoreCase(ex.getSourceType()))
+                .filter(ex -> "PETTY_TOPUP".equalsIgnoreCase(ex.getSourceType())
+                        || "PETTY_INITIAL".equalsIgnoreCase(ex.getSourceType()))
                 .map(BranchCashbookExpense::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal used = entries.stream()
@@ -1159,7 +1428,16 @@ public class BranchCollectionService {
                 .filter(ex -> "PETTY_RETURN".equalsIgnoreCase(ex.getSourceType()))
                 .map(BranchCashbookExpense::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal balance = topup.subtract(used).subtract(returned);
+        // Remittances sent to HO from petty cash also reduce the float.
+        // Rejected ones are returned to the branch so don't subtract them.
+        BigDecimal sentToHoFromPetty = remittanceRepository
+                .findByBranch_IdAndSourceAndBusinessDateLessThanEqual(branchId, com.bothash.admissionservice.enumpackage.RemittanceSource.PETTY_CASH, date)
+                .stream()
+                .filter(r -> !"REJECTED".equalsIgnoreCase(r.getStatus()))
+                .map(BranchCashbookRemittance::getSentAmount)
+                .map(this::amountOrZero)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal balance = topup.subtract(used).subtract(returned).subtract(sentToHoFromPetty);
         return balance.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : balance;
     }
 
@@ -1193,6 +1471,9 @@ public class BranchCollectionService {
         }
         if ("PETTY_RETURN".equals(raw)) {
             return "PETTY_RETURN";
+        }
+        if ("PETTY_INITIAL".equals(raw)) {
+            return "PETTY_INITIAL";
         }
         return "COLLECTION";
     }

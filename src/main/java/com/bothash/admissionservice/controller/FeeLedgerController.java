@@ -13,13 +13,16 @@ import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.bothash.admissionservice.dto.FeeLedgerPaymentResponseDto;
 import com.bothash.admissionservice.dto.FeeLedgerResponseDto;
+import com.bothash.admissionservice.entity.TelecallerAssignment;
 import com.bothash.admissionservice.service.FeeLedgerService;
+import com.bothash.admissionservice.service.TelecallerAssignmentService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -29,6 +32,21 @@ import lombok.RequiredArgsConstructor;
 public class FeeLedgerController {
 
     private final FeeLedgerService feeLedgerService;
+    private final TelecallerAssignmentService telecallerAssignmentService;
+
+    /**
+     * Loads the active telecaller rules for the caller if the UI signalled that the
+     * request is being made in a TELECALLER scope. Returns {@code null} when the
+     * header is absent (unrestricted query for HO/SUPER_ADMIN/etc.), and an empty
+     * list when the header is present but no rules exist (scope active — the
+     * service will block every row so an unassigned telecaller sees nothing).
+     */
+    private List<TelecallerAssignment> telecallerRules(String telecallerUserId) {
+        if (telecallerUserId == null || telecallerUserId.isBlank()) {
+            return null;
+        }
+        return telecallerAssignmentService.findActiveEntitiesForTelecaller(telecallerUserId);
+    }
 
     @GetMapping("/ledger")
     public ResponseEntity<FeeLedgerResponseDto> ledger(
@@ -56,7 +74,8 @@ public class FeeLedgerController {
             @RequestParam(required = false) BigDecimal paidAmount,
             @RequestParam(required = false) BigDecimal pendingMin,
             @RequestParam(required = false) BigDecimal pendingMax,
-            @RequestParam(required = false) Boolean branchApprovedOnly
+            @RequestParam(required = false) Boolean branchApprovedOnly,
+            @RequestHeader(value = "X-Telecaller-User-Id", required = false) String telecallerUserId
     ) {
         Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(size, 200),
                 Sort.by(Sort.Direction.DESC, "dueDate"));
@@ -77,13 +96,19 @@ public class FeeLedgerController {
             batchCodeList = List.of();
         }
 
-        FeeLedgerResponseDto response = feeLedgerService.search(
-                q, branchIdList, courseIdList, batch, batchCodeList, academicYearId,
-                startDate, endDate, dateType,
-                statusList, dueStatus, paymentModes, paymentTypes,
-                verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount,
-                pendingMin, pendingMax, branchApprovedOnly, pageable
+        final List<Long> finalBranchIdList = branchIdList;
+        final List<Long> finalCourseIdList = courseIdList;
+        final List<String> finalBatchCodeList = batchCodeList;
+        FeeLedgerResponseDto response = feeLedgerService.runInTelecallerScope(
+                telecallerRules(telecallerUserId),
+                () -> feeLedgerService.search(
+                        q, finalBranchIdList, finalCourseIdList, batch, finalBatchCodeList, academicYearId,
+                        startDate, endDate, dateType,
+                        statusList, dueStatus, paymentModes, paymentTypes,
+                        verification, proofAttached, txnPresent,
+                        paidAmountOp, paidAmount,
+                        pendingMin, pendingMax, branchApprovedOnly, pageable
+                )
         );
 
         return ResponseEntity.ok(response);
@@ -103,7 +128,8 @@ public class FeeLedgerController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) String paymentMode,
             @RequestParam(required = false) String paymentType,
-            @RequestParam(required = false) Boolean branchApprovedOnly
+            @RequestParam(required = false) Boolean branchApprovedOnly,
+            @RequestHeader(value = "X-Telecaller-User-Id", required = false) String telecallerUserId
     ) {
         List<String> paymentModes = splitCsv(paymentMode);
         List<String> paymentTypes = splitCsv(paymentType);
@@ -119,9 +145,15 @@ public class FeeLedgerController {
         if (batch != null && !batch.isBlank()) {
             batchCodeList = List.of();
         }
-        return ResponseEntity.ok(feeLedgerService.searchOtherPayments(
-                q, branchIdList, courseIdList, batch, batchCodeList, academicYearId,
-                startDate, endDate, paymentModes, paymentTypes, branchApprovedOnly
+        final List<Long> finalBranchIdList = branchIdList;
+        final List<Long> finalCourseIdList = courseIdList;
+        final List<String> finalBatchCodeList = batchCodeList;
+        return ResponseEntity.ok(feeLedgerService.runInTelecallerScope(
+                telecallerRules(telecallerUserId),
+                () -> feeLedgerService.searchOtherPayments(
+                        q, finalBranchIdList, finalCourseIdList, batch, finalBatchCodeList, academicYearId,
+                        startDate, endDate, paymentModes, paymentTypes, branchApprovedOnly
+                )
         ));
     }
 
@@ -151,7 +183,8 @@ public class FeeLedgerController {
             @RequestParam(required = false) BigDecimal paidAmount,
             @RequestParam(required = false) BigDecimal pendingMin,
             @RequestParam(required = false) BigDecimal pendingMax,
-            @RequestParam(required = false) Boolean branchApprovedOnly
+            @RequestParam(required = false) Boolean branchApprovedOnly,
+            @RequestHeader(value = "X-Telecaller-User-Id", required = false) String telecallerUserId
     ) {
         Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(size, 200),
                 Sort.by(Sort.Direction.DESC, "paidOn"));
@@ -172,13 +205,19 @@ public class FeeLedgerController {
             batchCodeList = List.of();
         }
 
-        FeeLedgerPaymentResponseDto response = feeLedgerService.searchPayments(
-                q, branchIdList, courseIdList, batch, batchCodeList, academicYearId,
-                startDate, endDate, dateType,
-                statusList, dueStatus, paymentModes, paymentTypes,
-                verification, proofAttached, txnPresent,
-                paidAmountOp, paidAmount,
-                pendingMin, pendingMax, branchApprovedOnly, pageable
+        final List<Long> finalBranchIdList = branchIdList;
+        final List<Long> finalCourseIdList = courseIdList;
+        final List<String> finalBatchCodeList = batchCodeList;
+        FeeLedgerPaymentResponseDto response = feeLedgerService.runInTelecallerScope(
+                telecallerRules(telecallerUserId),
+                () -> feeLedgerService.searchPayments(
+                        q, finalBranchIdList, finalCourseIdList, batch, finalBatchCodeList, academicYearId,
+                        startDate, endDate, dateType,
+                        statusList, dueStatus, paymentModes, paymentTypes,
+                        verification, proofAttached, txnPresent,
+                        paidAmountOp, paidAmount,
+                        pendingMin, pendingMax, branchApprovedOnly, pageable
+                )
         );
 
         return ResponseEntity.ok(response);

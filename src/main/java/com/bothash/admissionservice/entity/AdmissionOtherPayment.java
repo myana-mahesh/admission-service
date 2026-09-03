@@ -84,4 +84,14 @@ public class AdmissionOtherPayment extends Auditable {
 
     @Column(length = 600)
     private String invoiceDownloadUrl;
+
+    /** Account-head verification flag for the fees-overview Payments tab. */
+    @Column(name = "is_account_head_verified", nullable = false)
+    private Boolean isAccountHeadVerified = false;
+
+    @Column(name = "account_head_verified_by", length = 120)
+    private String accountHeadVerifiedBy;
+
+    @Column(name = "account_head_verified_at")
+    private java.time.LocalDateTime accountHeadVerifiedAt;
 }

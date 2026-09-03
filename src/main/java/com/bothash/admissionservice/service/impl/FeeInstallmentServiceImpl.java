@@ -2206,14 +2206,17 @@ public class FeeInstallmentServiceImpl {
 
     private String normalizePaymentType(String paymentType) {
         if (!StringUtils.hasText(paymentType)) {
-            throw new IllegalArgumentException("Payment type is required. Allowed values: Cash, Cheque, Online.");
+            throw new IllegalArgumentException("Payment type is required.");
         }
-        String normalized = paymentType.trim().toLowerCase();
+        String trimmed = paymentType.trim();
+        String normalized = trimmed.toLowerCase();
         return switch (normalized) {
             case "cash" -> "Cash";
             case "cheque", "check" -> "Cheque";
             case "online" -> "Online";
-            default -> throw new IllegalArgumentException("Invalid payment type. Allowed values: Cash, Cheque, Online.");
+            // Free-text values from the "Others" payment-type option are
+            // preserved as typed so history views render the original label.
+            default -> trimmed;
         };
     }
 

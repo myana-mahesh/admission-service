@@ -13,7 +13,9 @@ public interface LookupService {
 	AcademicYear getOrCreateYear(String label);
 
 	DocumentType getOrCreateDocType(String code, String name);
-	
+
+	DocumentType getOrCreateDocType(String code, String name, Boolean isMainDoc);
+
 	List<Course> getAllCourses();
     List<AcademicYear> getAllYears();
     List<DocumentType> getAllDocumentTypes();

@@ -37,6 +37,7 @@ import com.bothash.admissionservice.entity.Guardian;
 import com.bothash.admissionservice.entity.PaymentModeMaster;
 import com.bothash.admissionservice.entity.Student;
 import com.bothash.admissionservice.entity.StudentFeeSchedule;
+import com.bothash.admissionservice.entity.TelecallerAssignment;
 import com.bothash.admissionservice.enumpackage.GuardianRelation;
 import com.bothash.admissionservice.repository.FeeInstallmentPaymentRepository;
 import com.bothash.admissionservice.repository.FeeInvoiceRepository;
@@ -65,6 +66,119 @@ public class FeeLedgerService {
     private final FileUploadRepository uploadRepo;
     private final FeeInvoiceRepository invoiceRepo;
     private final FeeInstallmentPaymentRepository paymentRepo;
+
+    /**
+     * Per-request scope carrying the active telecaller assignment rules that must
+     * further restrict the fees-ledger query for the current caller. Populated by
+     * {@link #runInTelecallerScope(List, java.util.function.Supplier)}; read by the
+     * predicate builders. Non-telecaller callers never set this, so their queries
+     * are unaffected.
+     */
+    private static final ThreadLocal<List<TelecallerAssignment>> TELECALLER_RULES_TL = new ThreadLocal<>();
+
+    /**
+     * Runs {@code action} with a telecaller scope active on the current thread.
+     *
+     * <p>Semantics of {@code rules}:
+     * <ul>
+     *   <li>{@code null} — no scope active. Action sees the default (unrestricted)
+     *       query. Non-telecaller callers use this path.</li>
+     *   <li>empty list — scope active with no matching rules. The query is
+     *       forced to return no rows (block-all). Used when a telecaller has
+     *       zero assignments so they can't accidentally see everything.</li>
+     *   <li>non-empty list — scope active with rules OR'd together.</li>
+     * </ul>
+     * ThreadLocal is guaranteed cleared afterwards even on exception.
+     */
+    public <T> T runInTelecallerScope(List<TelecallerAssignment> rules, java.util.function.Supplier<T> action) {
+        boolean entered = false;
+        try {
+            if (rules != null) {
+                TELECALLER_RULES_TL.set(rules);
+                entered = true;
+            }
+            return action.get();
+        } finally {
+            if (entered) {
+                TELECALLER_RULES_TL.remove();
+            }
+        }
+    }
+
+    /**
+     * OR-of-ANDs across the active telecaller rules. Each rule contributes an AND
+     * over its non-null criteria (batch, course, running paid-amount comparator).
+     * When no rules are active, no predicate is added — the caller sees everything.
+     * The controller layer short-circuits to an empty ledger for a telecaller with
+     * zero active rules, so this method treats absent-rules as "no additional scope".
+     */
+    private void applyTelecallerScope(
+            CriteriaQuery<?> query,
+            CriteriaBuilder cb,
+            From<?, Admission2> admission,
+            List<Predicate> predicates
+    ) {
+        List<TelecallerAssignment> rules = TELECALLER_RULES_TL.get();
+        if (rules == null) {
+            return;
+        }
+        if (rules.isEmpty()) {
+            // Scope explicitly active but zero rules — block every row so the
+            // telecaller sees nothing until an HO assigns criteria to them.
+            predicates.add(cb.disjunction());
+            return;
+        }
+        List<Predicate> ruleOr = new ArrayList<>();
+        for (TelecallerAssignment rule : rules) {
+            List<Predicate> ruleAnd = new ArrayList<>();
+            if (StringUtils.hasText(rule.getBatchCode())) {
+                ruleAnd.add(cb.equal(admission.get("batch"), rule.getBatchCode()));
+            }
+            if (rule.getCourseId() != null) {
+                ruleAnd.add(cb.equal(admission.get("course").get("courseId"), rule.getCourseId()));
+            }
+            if (StringUtils.hasText(rule.getPaidAmountOp()) && rule.getPaidAmountValue() != null) {
+                Predicate paidPredicate = buildTelecallerPaidAmountPredicate(
+                        query, cb, admission, rule.getPaidAmountOp(), rule.getPaidAmountValue()
+                );
+                if (paidPredicate != null) {
+                    ruleAnd.add(paidPredicate);
+                }
+            }
+            if (ruleAnd.isEmpty()) {
+                continue;
+            }
+            ruleOr.add(ruleAnd.size() == 1 ? ruleAnd.get(0) : cb.and(ruleAnd.toArray(new Predicate[0])));
+        }
+        if (ruleOr.isEmpty()) {
+            return;
+        }
+        predicates.add(cb.or(ruleOr.toArray(new Predicate[0])));
+    }
+
+    private Predicate buildTelecallerPaidAmountPredicate(
+            CriteriaQuery<?> query,
+            CriteriaBuilder cb,
+            From<?, Admission2> admission,
+            String op,
+            BigDecimal amount
+    ) {
+        Subquery<BigDecimal> paidSumSubquery = query.subquery(BigDecimal.class);
+        Root<FeeInstallment> paidRoot = paidSumSubquery.from(FeeInstallment.class);
+        Join<FeeInstallment, Admission2> paidAdmission = paidRoot.join("admission", JoinType.INNER);
+        Expression<BigDecimal> paidSum = cb.sum(cb.coalesce(paidRoot.get("amountPaid"), BigDecimal.ZERO));
+        paidSumSubquery.select(paidSum);
+        paidSumSubquery.where(cb.equal(paidAdmission.get("admissionId"), admission.get("admissionId")));
+
+        return switch (op.trim().toUpperCase()) {
+            case "LT" -> cb.lessThan(paidSumSubquery, amount);
+            case "LTE" -> cb.lessThanOrEqualTo(paidSumSubquery, amount);
+            case "EQ" -> cb.equal(paidSumSubquery, amount);
+            case "GT" -> cb.greaterThan(paidSumSubquery, amount);
+            case "GTE" -> cb.greaterThanOrEqualTo(paidSumSubquery, amount);
+            default -> null;
+        };
+    }
 
     public FeeLedgerResponseDto search(
             String q,
@@ -210,14 +324,24 @@ public class FeeLedgerService {
 
         List<Predicate> predicates = new ArrayList<>();
 
-        if (StringUtils.hasText(q)) {
-            String like = "%" + q.trim().toLowerCase() + "%";
-            predicates.add(cb.or(
-                    cb.like(cb.lower(student.get("fullName")), like),
-                    cb.like(cb.lower(student.get("absId")), like),
-                    cb.like(cb.lower(student.get("mobile")), like),
-                    cb.like(cb.lower(root.get("txnRef")), like)
-            ));
+        // Exclude other-payments belonging to cancelled admissions from the
+        // fees-overview ledger, matching the main student / payment views.
+        predicates.add(cb.or(
+                cb.isNull(admission.get("status")),
+                cb.notEqual(admission.get("status"), com.bothash.admissionservice.enumpackage.AdmissionStatus.CANCELLED)
+        ));
+        predicates.add(cb.or(
+                cb.isNull(admission.get("temporaryAdmission")),
+                cb.equal(admission.get("temporaryAdmission"), Boolean.FALSE)
+        ));
+
+        Predicate searchPredicate = buildTokenizedSearchPredicate(cb, q,
+                student.get("fullName"),
+                student.get("absId"),
+                student.get("mobile"),
+                root.get("txnRef"));
+        if (searchPredicate != null) {
+            predicates.add(searchPredicate);
         }
         if (branchIds != null && !branchIds.isEmpty()) {
             predicates.add(branch.get("id").in(branchIds));
@@ -255,6 +379,8 @@ public class FeeLedgerService {
         if (Boolean.TRUE.equals(branchApprovedOnly)) {
             predicates.add(cb.equal(admission.get("branchApproved"), Boolean.TRUE));
         }
+
+        applyTelecallerScope(cq, cb, admission, predicates);
 
         cq.select(root).where(predicates.toArray(new Predicate[0]))
                 .orderBy(cb.desc(root.get("paidOn")), cb.desc(root.get("paymentId")));
@@ -308,6 +434,9 @@ public class FeeLedgerService {
         dto.setReceiptUrl(p.getReceiptStorageUrl());
         dto.setInvoiceNumber(p.getInvoiceNumber());
         dto.setInvoiceUrl(p.getInvoiceDownloadUrl());
+        dto.setAccountHeadVerified(p.getIsAccountHeadVerified());
+        dto.setAccountHeadVerifiedBy(p.getAccountHeadVerifiedBy());
+        dto.setAccountHeadVerifiedAt(p.getAccountHeadVerifiedAt());
         return dto;
     }
 
@@ -416,6 +545,7 @@ public class FeeLedgerService {
                 .statusSummary(statusSummary)
                 .hasSchedule(scheduleCount > 0)
                 .scheduleCount(scheduleCount)
+                .temporaryAdmission(admission.getTemporaryAdmission())
                 .build();
     }
 
@@ -995,13 +1125,25 @@ public class FeeLedgerService {
     ) {
         List<Predicate> predicates = new ArrayList<>();
 
-        if (StringUtils.hasText(q)) {
-            String like = "%" + q.toLowerCase().trim() + "%";
-            predicates.add(cb.or(
-                    cb.like(cb.lower(student.get("fullName")), like),
-                    cb.like(cb.lower(student.get("absId")), like),
-                    cb.like(cb.lower(student.get("mobile")), like)
-            ));
+        // Cancelled admissions must never show up in the fees overview (rows,
+        // summary cards, other-payment totals, everything). They still exist
+        // in admission-list, but their fees are off the finance board.
+        predicates.add(cb.or(
+                cb.isNull(admission.get("status")),
+                cb.notEqual(admission.get("status"), com.bothash.admissionservice.enumpackage.AdmissionStatus.CANCELLED)
+        ));
+        // Temporary admissions are hidden from the fees overview until confirmed.
+        predicates.add(cb.or(
+                cb.isNull(admission.get("temporaryAdmission")),
+                cb.equal(admission.get("temporaryAdmission"), Boolean.FALSE)
+        ));
+
+        Predicate searchPredicate = buildTokenizedSearchPredicate(cb, q,
+                student.get("fullName"),
+                student.get("absId"),
+                student.get("mobile"));
+        if (searchPredicate != null) {
+            predicates.add(searchPredicate);
         }
 
         if (branchIds != null && !branchIds.isEmpty()) {
@@ -1045,6 +1187,7 @@ public class FeeLedgerService {
 
         applyPaidAmountFilter(query, cb, admission, predicates, paidAmountOp, paidAmount);
         applyPendingRangeFilter(query, cb, admission, predicates, pendingMin, pendingMax);
+        applyTelecallerScope(query, cb, admission, predicates);
 
         return predicates;
     }
@@ -1108,14 +1251,24 @@ public class FeeLedgerService {
     ) {
         List<Predicate> predicates = new ArrayList<>();
 
-        if (StringUtils.hasText(q)) {
-            String like = "%" + q.toLowerCase().trim() + "%";
-            predicates.add(cb.or(
-                    cb.like(cb.lower(student.get("fullName")), like),
-                    cb.like(cb.lower(student.get("absId")), like),
-                    cb.like(cb.lower(student.get("mobile")), like),
-                    cb.like(cb.lower(paymentRoot.get("txnRef")), like)
-            ));
+        // Payments view mirrors the student view: drop payments belonging to
+        // cancelled admissions from both rows and summary aggregates.
+        predicates.add(cb.or(
+                cb.isNull(admission.get("status")),
+                cb.notEqual(admission.get("status"), com.bothash.admissionservice.enumpackage.AdmissionStatus.CANCELLED)
+        ));
+        predicates.add(cb.or(
+                cb.isNull(admission.get("temporaryAdmission")),
+                cb.equal(admission.get("temporaryAdmission"), Boolean.FALSE)
+        ));
+
+        Predicate searchPredicate = buildTokenizedSearchPredicate(cb, q,
+                student.get("fullName"),
+                student.get("absId"),
+                student.get("mobile"),
+                paymentRoot.get("txnRef"));
+        if (searchPredicate != null) {
+            predicates.add(searchPredicate);
         }
 
         if (branchIds != null && !branchIds.isEmpty()) {
@@ -1158,6 +1311,7 @@ public class FeeLedgerService {
         applyDueStatusFilter(cb, installment, predicates, dueStatus);
         applyPaidAmountFilter(query, cb, admission, predicates, paidAmountOp, paidAmount);
         applyPendingRangeFilter(query, cb, admission, predicates, pendingMin, pendingMax);
+        applyTelecallerScope(query, cb, admission, predicates);
 
         return predicates;
     }
@@ -1240,6 +1394,43 @@ public class FeeLedgerService {
         scheduleSubquery.where(schedulePredicates.toArray(new Predicate[0]));
 
         predicates.add(cb.exists(scheduleSubquery));
+    }
+
+    /**
+     * Builds a multi-word search predicate against any number of string
+     * columns. The query is split on whitespace; each token must match at
+     * least one of the supplied fields (LIKE %token%), and all tokens must
+     * match (AND across tokens). This lets searches like "Mahesh Myana" find
+     * "MYANA MAHESH KUMAR" and lets the user mix terms across fields, e.g.
+     * a name word + a phone digit group.
+     *
+     * Returns null when the query is blank or no usable tokens are present,
+     * so callers can skip adding it without an empty predicate.
+     */
+    @SafeVarargs
+    private final Predicate buildTokenizedSearchPredicate(CriteriaBuilder cb,
+                                                          String q,
+                                                          Expression<String>... fields) {
+        if (!StringUtils.hasText(q) || fields == null || fields.length == 0) {
+            return null;
+        }
+        String[] tokens = q.trim().toLowerCase().split("\\s+");
+        List<Predicate> tokenPredicates = new ArrayList<>(tokens.length);
+        for (String token : tokens) {
+            if (token == null || token.isEmpty()) {
+                continue;
+            }
+            String like = "%" + token + "%";
+            List<Predicate> fieldMatches = new ArrayList<>(fields.length);
+            for (Expression<String> field : fields) {
+                fieldMatches.add(cb.like(cb.lower(field), like));
+            }
+            tokenPredicates.add(cb.or(fieldMatches.toArray(new Predicate[0])));
+        }
+        if (tokenPredicates.isEmpty()) {
+            return null;
+        }
+        return cb.and(tokenPredicates.toArray(new Predicate[0]));
     }
 
     private void applyLocalDateRange(CriteriaBuilder cb, List<Predicate> predicates,

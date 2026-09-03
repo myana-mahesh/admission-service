@@ -33,6 +33,16 @@ public class BranchRemittanceDetailDto {
     private OffsetDateTime sentAt;
     private String notes;
 
+    /** PENDING / ACCEPTED / REJECTED — HO acceptance state. */
+    private String status;
+    private String handlerName;
+    private String handlerRemark;
+    private String handledBy;
+    private OffsetDateTime handledAt;
+
+    /** PETTY_CASH or COLLECTION — where the remitted cash came from. */
+    private String source;
+
     private List<BranchCollectionPaymentItemDto> collections;
     private List<BranchCashbookExpenseDto> expenses;
     private List<BranchCashbookExpenseDto> pettyTransactions;

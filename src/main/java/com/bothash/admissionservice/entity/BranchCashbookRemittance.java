@@ -4,8 +4,12 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
+import com.bothash.admissionservice.enumpackage.RemittanceSource;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -13,6 +17,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
@@ -48,4 +53,38 @@ public class BranchCashbookRemittance {
 
     @Column(name = "notes", length = 500)
     private String notes;
+
+    /** PENDING (default after Mark Sent) → ACCEPTED or REJECTED by HO. */
+    @Column(name = "status", nullable = false, length = 20)
+    private String status = "PENDING";
+
+    /** Free-text name of who handled this remittance at HO end. */
+    @Column(name = "handler_name", length = 120)
+    private String handlerName;
+
+    /** HO's remark when accepting or rejecting. */
+    @Column(name = "handler_remark", length = 500)
+    private String handlerRemark;
+
+    /** Auth-resolved actor who clicked Accept/Reject. */
+    @Column(name = "handled_by", length = 120)
+    private String handledBy;
+
+    @Column(name = "handled_at")
+    private OffsetDateTime handledAt;
+
+    /** Where the remitted cash came from: petty cash float or fee collection. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source", nullable = false, length = 20)
+    private RemittanceSource source = RemittanceSource.COLLECTION;
+
+    @PrePersist
+    void defaultStatus() {
+        if (status == null || status.isBlank()) {
+            status = "PENDING";
+        }
+        if (source == null) {
+            source = RemittanceSource.COLLECTION;
+        }
+    }
 }

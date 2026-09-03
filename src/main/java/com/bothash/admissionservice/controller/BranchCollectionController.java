@@ -20,6 +20,7 @@ import com.bothash.admissionservice.dto.BranchCashbookExpenseDto;
 import com.bothash.admissionservice.dto.BranchCashbookExpenseRequest;
 import com.bothash.admissionservice.dto.BranchCashbookExpenseUpdateRequest;
 import com.bothash.admissionservice.dto.BranchPettyCashAddRequest;
+import com.bothash.admissionservice.dto.BranchPettyCashInitialRequest;
 import com.bothash.admissionservice.dto.BranchPettyCashReturnRequest;
 import com.bothash.admissionservice.dto.BranchRemittanceDetailDto;
 import com.bothash.admissionservice.dto.BranchRemittanceHistoryDto;
@@ -82,6 +83,11 @@ public class BranchCollectionController {
         return ResponseEntity.ok(branchCollectionService.returnPettyCashToCollection(request));
     }
 
+    @PostMapping("/petty-cash/initial")
+    public ResponseEntity<BranchCashbookExpenseDto> addInitialPettyCash(@RequestBody BranchPettyCashInitialRequest request) {
+        return ResponseEntity.ok(branchCollectionService.addInitialPettyCash(request));
+    }
+
     @GetMapping("/history")
     public ResponseEntity<PagedResponse<BranchRemittanceHistoryDto>> remittanceHistory(
             @RequestParam Long branchId,
@@ -106,4 +112,54 @@ public class BranchCollectionController {
     ) {
         return ResponseEntity.ok(branchCollectionService.getHoRemittances(branchIds, perBranchLimit));
     }
+
+    @PostMapping("/remittances/{remittanceId}/accept")
+    public ResponseEntity<BranchRemittanceDetailDto> acceptRemittance(
+            @PathVariable Long remittanceId,
+            @RequestBody RemittanceHandleRequest body,
+            @RequestParam(required = false) String actor
+    ) {
+        return ResponseEntity.ok(branchCollectionService.acceptRemittance(
+                remittanceId,
+                body != null ? body.handlerName() : null,
+                body != null ? body.handlerRemark() : null,
+                actor));
+    }
+
+    @PostMapping("/remittances/{remittanceId}/reject")
+    public ResponseEntity<BranchRemittanceDetailDto> rejectRemittance(
+            @PathVariable Long remittanceId,
+            @RequestBody RemittanceHandleRequest body,
+            @RequestParam(required = false) String actor
+    ) {
+        return ResponseEntity.ok(branchCollectionService.rejectRemittance(
+                remittanceId,
+                body != null ? body.handlerName() : null,
+                body != null ? body.handlerRemark() : null,
+                actor));
+    }
+
+    @GetMapping("/rejected-remittances")
+    public ResponseEntity<java.util.List<BranchRemittanceHistoryDto>> rejectedRemittances(
+            @RequestParam Long branchId,
+            @RequestParam(required = false) String currentUser
+    ) {
+        return ResponseEntity.ok(
+                branchCollectionService.listRejectedSinceLastResubmit(branchId, currentUser));
+    }
+
+    @PostMapping("/rejected-remittances/{remittanceId}/acknowledge")
+    public ResponseEntity<?> acknowledgeRejected(
+            @PathVariable Long remittanceId,
+            @RequestParam String currentUser
+    ) {
+        try {
+            branchCollectionService.acknowledgeRejectedRemittance(remittanceId, currentUser);
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(ex.getMessage());
+        }
+    }
+
+    public record RemittanceHandleRequest(String handlerName, String handlerRemark) {}
 }

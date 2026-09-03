@@ -41,8 +41,17 @@ public class LookupServiceImpl implements LookupService {
 
 	@Override
 	public DocumentType getOrCreateDocType(String code, String name) {
-		return docTypeRepo.findByCode(code)
-				.orElseGet(() -> docTypeRepo.save(DocumentType.builder().code(code).name(name).build()));
+		return getOrCreateDocType(code, name, null);
+	}
+
+	@Override
+	public DocumentType getOrCreateDocType(String code, String name, Boolean isMainDoc) {
+		return docTypeRepo.findByCode(code).orElseGet(() ->
+				docTypeRepo.save(DocumentType.builder()
+						.code(code)
+						.name(name)
+						.isMainDoc(isMainDoc)
+						.build()));
 	}
 
 	@Override

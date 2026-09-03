@@ -16,4 +16,6 @@ public class AdmissionUploadDto {
     private String filename;
     private String storageUrl;
     private Long installmentId;
+    /** True for curated main docs (SSC/HSC/…); false or null for custom "Other Documents" promoted from Add Other Document. */
+    private Boolean isMainDoc;
 }

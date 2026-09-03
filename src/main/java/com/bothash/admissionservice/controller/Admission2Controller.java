@@ -128,6 +128,15 @@ public class Admission2Controller {
     return ResponseEntity.ok(admissionService.addOtherPaymentReturn(id, req));
   }
 
+  @PutMapping("/{id}/other-payments/{paymentId}")
+  public ResponseEntity<AdmissionOtherPaymentDto> updateOtherPayment(
+      @PathVariable Long id,
+      @PathVariable Long paymentId,
+      @RequestBody AdmissionOtherPaymentRequest req
+  ) {
+    return ResponseEntity.ok(admissionService.updateOtherPayment(id, paymentId, req));
+  }
+
   @DeleteMapping("/{id}/other-payments/{paymentId}")
   public ResponseEntity<Void> deleteOtherPayment(
       @PathVariable Long id,
@@ -135,6 +144,14 @@ public class Admission2Controller {
   ) {
     admissionService.deleteOtherPayment(id, paymentId);
     return ResponseEntity.noContent().build();
+  }
+
+  @PostMapping("/other-payments/{paymentId}/account-head-verify")
+  public ResponseEntity<AdmissionOtherPaymentDto> verifyOtherPaymentByAccountHead(
+      @PathVariable Long paymentId,
+      @RequestParam(required = false) String actor
+  ) {
+    return ResponseEntity.ok(admissionService.verifyOtherPaymentByAccountHead(paymentId, actor));
   }
 
   @GetMapping("/{id}/additional-qualifications")
@@ -185,6 +202,7 @@ public class Admission2Controller {
             .filename(upload.getFilename())
             .storageUrl(upload.getStorageUrl())
             .installmentId(upload.getInstallment() != null ? upload.getInstallment().getInstallmentId() : null)
+            .isMainDoc(upload.getDocType() != null ? upload.getDocType().getIsMainDoc() : null)
             .build())
         .toList();
     return ResponseEntity.ok(results);
@@ -297,6 +315,14 @@ public class Admission2Controller {
           @RequestParam String actor
   ) {
     return ResponseEntity.ok(admissionService.updateCollegeVerification(id, status, actor));
+  }
+
+  @PostMapping("/{id}/temporary-admission/clear")
+  public ResponseEntity<Admission2> clearTemporaryAdmission(
+          @PathVariable Long id,
+          @RequestParam(required = false) String actor
+  ) {
+    return ResponseEntity.ok(admissionService.confirmTemporaryAdmission(id, actor));
   }
 
   @GetMapping

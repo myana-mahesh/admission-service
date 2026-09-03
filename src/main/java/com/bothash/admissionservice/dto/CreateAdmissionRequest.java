@@ -32,4 +32,5 @@ public class CreateAdmissionRequest {
 	private OfficeUpdateRequest officeUpdateRequest;
 	private Long lectureBranchId;
 	private Long  admissionBranchId;
+	private Boolean temporaryAdmission;
 }

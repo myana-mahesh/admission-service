@@ -67,6 +67,13 @@ public interface Admission2Service {
 			LocalDate dueDate, String mode, String receivedBy, String status);
 	
 	Admission2 acknowledgeAdmission(Long id);
+
+	/**
+	 * Flip the temporary-admission flag to false. No-ops if it's already
+	 * false (the flag is irreversible once cleared). Throws if the record
+	 * doesn't exist.
+	 */
+	Admission2 confirmTemporaryAdmission(Long id, String actor);
 	Admission2 updateCollegeVerification(Long admissionId, String status, String actor);
 
 
@@ -85,7 +92,9 @@ public interface Admission2Service {
 	List<AdmissionOtherPaymentDto> listOtherPayments(Long admissionId);
 	AdmissionOtherPaymentDto addOtherPayment(Long admissionId, AdmissionOtherPaymentRequest request);
 	AdmissionOtherPaymentDto addOtherPaymentReturn(Long admissionId, AdmissionOtherPaymentReturnRequest request);
+	AdmissionOtherPaymentDto updateOtherPayment(Long admissionId, Long paymentId, AdmissionOtherPaymentRequest request);
 	void deleteOtherPayment(Long admissionId, Long paymentId);
+	AdmissionOtherPaymentDto verifyOtherPaymentByAccountHead(Long paymentId, String verifiedBy);
 
 	FeeInstallment upsertInstallment(Long admissionId, int studyYear, int installmentNo, BigDecimal amountDue,
 			LocalDate dueDate, String mode, String receivedBy, String status, Double yearlyFeesAmount, String txnRef,

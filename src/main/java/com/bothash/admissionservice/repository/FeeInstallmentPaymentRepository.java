@@ -21,7 +21,7 @@ public interface FeeInstallmentPaymentRepository extends JpaRepository<FeeInstal
             select p from FeeInstallmentPayment p
             join p.installment i
             join i.admission a
-            join a.admissionBranch b
+            join a.lectureBranch b
             where b.id = :branchId
               and p.amount > 0
               and upper(trim(coalesce(p.paymentType, ''))) in ('CASH', 'CHEQUE', 'CHECK')
@@ -38,7 +38,7 @@ public interface FeeInstallmentPaymentRepository extends JpaRepository<FeeInstal
             select p from FeeInstallmentPayment p
             join p.installment i
             join i.admission a
-            join a.admissionBranch b
+            join a.lectureBranch b
             where b.id = :branchId
               and p.amount > 0
               and upper(trim(coalesce(p.paymentType, ''))) in ('CASH', 'CHEQUE', 'CHECK')
@@ -56,7 +56,7 @@ public interface FeeInstallmentPaymentRepository extends JpaRepository<FeeInstal
             select p from FeeInstallmentPayment p
             join p.installment i
             join i.admission a
-            join a.admissionBranch b
+            join a.lectureBranch b
             where b.id = :branchId
               and p.amount > 0
               and upper(trim(coalesce(p.paymentType, ''))) in ('CASH', 'CHEQUE', 'CHECK')
@@ -69,7 +69,7 @@ public interface FeeInstallmentPaymentRepository extends JpaRepository<FeeInstal
             select p from FeeInstallmentPayment p
             join p.installment i
             join i.admission a
-            join a.admissionBranch b
+            join a.lectureBranch b
             where b.id = :branchId
               and p.amount > 0
               and function('date', p.createdAt) between :fromDate and :toDate
@@ -89,7 +89,7 @@ public interface FeeInstallmentPaymentRepository extends JpaRepository<FeeInstal
             select p from FeeInstallmentPayment p
             join p.installment i
             join i.admission a
-            join a.admissionBranch b
+            join a.lectureBranch b
             where b.id = :branchId
               and p.amount > 0
               and upper(trim(coalesce(p.paymentType, ''))) in ('CASH', 'CHEQUE', 'CHECK')
@@ -110,7 +110,7 @@ public interface FeeInstallmentPaymentRepository extends JpaRepository<FeeInstal
             select p from FeeInstallmentPayment p
             join p.installment i
             join i.admission a
-            join a.admissionBranch b
+            join a.lectureBranch b
             where b.id = :branchId
               and p.amount > 0
               and upper(trim(coalesce(p.paymentType, ''))) in ('CASH', 'CHEQUE', 'CHECK')

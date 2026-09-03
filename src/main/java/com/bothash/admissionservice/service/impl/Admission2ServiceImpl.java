@@ -27,6 +27,7 @@ import org.springframework.util.StringUtils;
 
 import com.bothash.admissionservice.service.Admission2Service;
 import com.bothash.admissionservice.service.AdmissionAuditService;
+import com.bothash.admissionservice.service.LookupService;
 import com.bothash.admissionservice.dto.CreateAdmissionRequest;
 import com.bothash.admissionservice.dto.InstallmentUpsertRequest;
 import com.bothash.admissionservice.dto.MultipleUploadRequest;
@@ -69,6 +70,7 @@ private final FileUploadRepository uploadRepo;
 	private final FeeInvoiceRepository invoiceRepo;
 	private final AdmissionAuditService admissionAuditService;
 	private final R2InvoiceStorageService r2InvoiceStorageService;
+	private final LookupService lookupService;
 	
 	@Autowired
 	private YearlyFeesRepository yearlyFeesRepository;
@@ -183,6 +185,14 @@ private final FileUploadRepository uploadRepo;
 		a.setReferenceName(req.getOfficeUpdateRequest().getReferenceName());
 		a.setAdmissionBranch(admissionBranch);
 		a.setLectureBranch(lectureBranch);
+		// Temporary-admission flag: honour the request only on create. Once the
+		// record exists, the flag can only travel from true→false (via the
+		// dedicated clear endpoint or the ADMITTED promotion). Ignoring the
+		// request on update prevents the form from re-enabling it after the
+		// user or the system have already confirmed the admission.
+		if (isNew) {
+			a.setTemporaryAdmission(Boolean.TRUE.equals(req.getTemporaryAdmission()));
+		}
 		a = admissionRepo.save(a);
 
 		if (!isNew) {
@@ -582,7 +592,22 @@ private final FileUploadRepository uploadRepo;
 		for(UploadRequest uploadReq:req.getFiles()) {
 			DocumentType dt = null;
 			String docTypeCode = uploadReq.getDocTypeCode();
-			if (StringUtils.hasText(docTypeCode)) {
+			String labelText = uploadReq.getLabel();
+			boolean isOthersPlaceholder = StringUtils.hasText(docTypeCode)
+					&& docTypeCode.toUpperCase(Locale.ROOT).matches("OTHERS\\d+");
+
+			// "Add Other Document" rows arrive with placeholder codes like OTHERS1 / OTHERS2.
+			// Some installs have those placeholders seeded in document_type, so a plain
+			// findByCode would resolve them and the upload would be saved under the
+			// useless placeholder row. Promote first whenever the placeholder pattern is
+			// present and the user typed a non-empty label.
+			if (isOthersPlaceholder && StringUtils.hasText(labelText)) {
+				String slug = slugifyDocTypeCode(labelText);
+				if (StringUtils.hasText(slug)) {
+					dt = lookupService.getOrCreateDocType(slug, labelText.trim(), Boolean.FALSE);
+				}
+			}
+			if (dt == null && StringUtils.hasText(docTypeCode) && !isOthersPlaceholder) {
 				dt = docTypeRepo.findByCode(docTypeCode).orElse(null); // uploads may be misc (null)
 			}
 
@@ -764,6 +789,63 @@ private final FileUploadRepository uploadRepo;
 	}
 
 	@Override
+	public AdmissionOtherPaymentDto updateOtherPayment(Long admissionId, Long paymentId, AdmissionOtherPaymentRequest request) {
+		Admission2 admission = admissionRepo.findById(admissionId)
+				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
+		AdmissionOtherPayment payment = admissionOtherPaymentRepository.findById(paymentId)
+				.orElseThrow(() -> new IllegalArgumentException("Other payment not found: " + paymentId));
+		if (!Objects.equals(payment.getAdmission().getAdmissionId(), admissionId)) {
+			throw new IllegalArgumentException("Payment does not belong to this admission.");
+		}
+		if (request == null || request.getAmount() == null || request.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+			throw new IllegalArgumentException("Amount must be greater than zero.");
+		}
+		BigDecimal existingReturned = payment.getReturnedAmount() != null ? payment.getReturnedAmount() : BigDecimal.ZERO;
+		if (request.getAmount().compareTo(existingReturned) < 0) {
+			throw new IllegalArgumentException("Amount cannot be less than the total already returned (" + existingReturned + ").");
+		}
+
+		BigDecimal previousAmount = payment.getAmount();
+		String previousMode = payment.getPaymentMode() != null ? payment.getPaymentMode().getCode() : null;
+		String previousType = payment.getPaymentType();
+		String previousTxnRef = payment.getTxnRef();
+		String previousCategory = payment.getCategory();
+		String previousRemarks = payment.getRemarks();
+		LocalDate previousPaidOn = payment.getPaidOn();
+
+		payment.setAmount(request.getAmount());
+		payment.setPaidOn(request.getPaidOn() != null ? request.getPaidOn() : payment.getPaidOn());
+		payment.setTxnRef(normalizeToNull(request.getTxnRef()));
+		payment.setCategory(normalizeToNull(request.getCategory()));
+		payment.setRemarks(normalizeToNull(request.getRemarks()));
+		payment.setPaymentMode(resolvePaymentMode(request.getMode()));
+		payment.setPaymentType(normalizePaymentType(request.getPaymentType()));
+
+		UploadRequest receipt = request.getReceipt();
+		if (receipt != null && StringUtils.hasText(receipt.getStorageUrl())) {
+			payment.setReceiptName(normalizeToNull(receipt.getFilename()));
+			payment.setReceiptMimeType(normalizeToNull(receipt.getMimeType()));
+			payment.setReceiptSizeBytes(receipt.getSizeBytes());
+			payment.setReceiptStorageUrl(normalizeToNull(receipt.getStorageUrl()));
+			payment.setReceiptSha256(normalizeToNull(receipt.getSha256()));
+		}
+
+		payment = admissionOtherPaymentRepository.save(payment);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "otherPayment.amount", previousAmount, payment.getAmount());
+		addChange(changes, "otherPayment.paidOn", previousPaidOn, payment.getPaidOn());
+		addChange(changes, "otherPayment.mode", previousMode,
+				payment.getPaymentMode() != null ? payment.getPaymentMode().getCode() : null);
+		addChange(changes, "otherPayment.paymentType", previousType, payment.getPaymentType());
+		addChange(changes, "otherPayment.txnRef", previousTxnRef, payment.getTxnRef());
+		addChange(changes, "otherPayment.category", previousCategory, payment.getCategory());
+		addChange(changes, "otherPayment.remarks", previousRemarks, payment.getRemarks());
+		audit(admission, "OTHER_PAYMENT_UPDATED", request.getReceivedBy(),
+				Map.of("paymentId", paymentId), changes);
+		return toOtherPaymentDto(payment);
+	}
+
+	@Override
 	public void deleteOtherPayment(Long admissionId, Long paymentId) {
 		Admission2 admission = admissionRepo.findById(admissionId)
 				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + admissionId));
@@ -792,6 +874,26 @@ private final FileUploadRepository uploadRepo;
 		Map<String, Object> changes = new LinkedHashMap<>();
 		addChange(changes, "otherPayment.deletedPaymentId", null, paymentId);
 		audit(admission, "OTHER_PAYMENT_DELETED", null, Map.of("paymentId", paymentId), changes);
+	}
+
+	@Override
+	public AdmissionOtherPaymentDto verifyOtherPaymentByAccountHead(Long paymentId, String verifiedBy) {
+		AdmissionOtherPayment payment = admissionOtherPaymentRepository.findById(paymentId)
+				.orElseThrow(() -> new IllegalArgumentException("Other payment not found: " + paymentId));
+		if (Boolean.TRUE.equals(payment.getIsAccountHeadVerified())) {
+			return toOtherPaymentDto(payment);
+		}
+		payment.setIsAccountHeadVerified(Boolean.TRUE);
+		payment.setAccountHeadVerifiedBy(verifiedBy);
+		payment.setAccountHeadVerifiedAt(LocalDateTime.now());
+		AdmissionOtherPayment saved = admissionOtherPaymentRepository.save(payment);
+		Map<String, Object> changes = new LinkedHashMap<>();
+		addChange(changes, "otherPayment.accountHeadVerified", false, true);
+		addChange(changes, "otherPayment.accountHeadVerifiedBy", null, verifiedBy);
+		Admission2 admission = saved.getAdmission();
+		audit(admission, "OTHER_PAYMENT_ACCOUNT_HEAD_VERIFIED", verifiedBy,
+				Map.of("paymentId", paymentId), changes);
+		return toOtherPaymentDto(saved);
 	}
 
 	@Override
@@ -1013,10 +1115,7 @@ private final FileUploadRepository uploadRepo;
 			beforeInstallments.put(installment.getInstallmentId(), snapshot);
 		}
 
-		PaymentModeMaster paymentMode = null;
-		if (StringUtils.hasText(request.getMode())) {
-			paymentMode = service.getByMode(request.getMode());
-		}
+		PaymentModeMaster paymentMode = resolvePaymentMode(request.getMode());
 		String paymentType = normalizePaymentType(request.getPaymentType());
 		if (log.isInfoEnabled()) {
 			log.info("applyPartialPayment start admissionId={} admissionBranchId={} lectureBranchId={} amount={} paidOn={} role={} paymentType={} mode={} modeCode={} txnRef={}",
@@ -1358,14 +1457,18 @@ private final FileUploadRepository uploadRepo;
 
 	private String normalizePaymentType(String paymentType) {
 		if (!StringUtils.hasText(paymentType)) {
-			throw new IllegalArgumentException("Payment type is required. Allowed values: Cash, Cheque, Online.");
+			throw new IllegalArgumentException("Payment type is required.");
 		}
-		String normalized = paymentType.trim().toLowerCase(Locale.ENGLISH);
+		String trimmed = paymentType.trim();
+		String normalized = trimmed.toLowerCase(Locale.ENGLISH);
 		return switch (normalized) {
 			case "cash" -> "Cash";
 			case "cheque", "check" -> "Cheque";
 			case "online" -> "Online";
-			default -> throw new IllegalArgumentException("Invalid payment type. Allowed values: Cash, Cheque, Online.");
+			// The UI lets the user pick "Others" and type a free-text payment
+			// type (Bank Draft, NEFT-QR, …). Preserve whatever they typed
+			// verbatim so history views show the original wording.
+			default -> trimmed;
 		};
 	}
 
@@ -1457,17 +1560,50 @@ private final FileUploadRepository uploadRepo;
 	@Override
 	public Admission2 acknowledgeAdmission(Long id) {
 		Optional<Admission2> admissionOpt = this.admissionRepo.findByAdmissionId(id);
-		
+
 		if(admissionOpt.isPresent()) {
 			Admission2 admission = admissionOpt.get();
 			if (admission.getStatus() != AdmissionStatus.ADMITTED) {
+				AdmissionStatus previousStatus = admission.getStatus();
+				Boolean previousTemporary = admission.getTemporaryAdmission();
 				admission.setStatus(AdmissionStatus.ADMITTED);
+				// Confirming an admission also promotes any temporary flag off.
+				if (Boolean.TRUE.equals(previousTemporary)) {
+					admission.setTemporaryAdmission(false);
+				}
 				this.admissionRepo.save(admission);
 				allocateSeatIfPossible(admission);
+
+				// Persist the transition in admission_audit so the record
+				// carries "was ever Temporary" and "who confirmed it" forever.
+				Map<String, Object> changes = new LinkedHashMap<>();
+				addChange(changes, "status", previousStatus, admission.getStatus());
+				if (Boolean.TRUE.equals(previousTemporary)
+						&& !Boolean.TRUE.equals(admission.getTemporaryAdmission())) {
+					addChange(changes, "temporaryAdmission", true, false);
+				}
+				audit(admission, "ADMISSION_ACKNOWLEDGED", null,
+						Map.of("admissionId", id), changes);
 			}
 			return admission;
 		}
 		return null;
+	}
+
+	@Override
+	@Transactional
+	public Admission2 confirmTemporaryAdmission(Long id, String actor) {
+		Admission2 admission = admissionRepo.findById(id)
+				.orElseThrow(() -> new IllegalArgumentException("Admission not found: " + id));
+		if (Boolean.TRUE.equals(admission.getTemporaryAdmission())) {
+			admission.setTemporaryAdmission(false);
+			admission = admissionRepo.save(admission);
+			Map<String, Object> changes = new LinkedHashMap<>();
+			addChange(changes, "temporaryAdmission", true, false);
+			audit(admission, "TEMPORARY_ADMISSION_CLEARED", actor,
+					Map.of("admissionId", id), changes);
+		}
+		return admission;
 	}
 
 	@Override
@@ -1523,9 +1659,16 @@ private final FileUploadRepository uploadRepo;
 		Admission2 admission = getAdmission(admissionId);
 		AdmissionStatus previous = admission.getStatus();
 		admission.setStatus(status);
+		Boolean previousTemporary = admission.getTemporaryAdmission();
+		if (status == AdmissionStatus.ADMITTED && Boolean.TRUE.equals(previousTemporary)) {
+			admission.setTemporaryAdmission(false);
+		}
 		admission = admissionRepo.save(admission);
 		Map<String, Object> changes = new LinkedHashMap<>();
 		addChange(changes, "status", previous, admission.getStatus());
+		if (Boolean.TRUE.equals(previousTemporary) && !Boolean.TRUE.equals(admission.getTemporaryAdmission())) {
+			addChange(changes, "temporaryAdmission", true, false);
+		}
 		audit(admission, "ADMISSION_STATUS_UPDATED", null, Map.of("admissionId", admissionId), changes);
 		if (previous != AdmissionStatus.ADMITTED && status == AdmissionStatus.ADMITTED) {
 			allocateSeatIfPossible(admission);
@@ -1637,6 +1780,27 @@ private final FileUploadRepository uploadRepo;
 			return null;
 		}
 		return value.trim();
+	}
+
+	/**
+	 * Convert a human-typed document name into a stable upper-snake slug usable
+	 * as a {@code document_type.code} (max 32 chars). Non-alphanumerics collapse
+	 * to {@code _}; leading/trailing underscores are trimmed. Returns {@code null}
+	 * if nothing useful remains (e.g. label was just punctuation).
+	 */
+	private String slugifyDocTypeCode(String value) {
+		if (!StringUtils.hasText(value)) {
+			return null;
+		}
+		String upper = value.trim().toUpperCase(Locale.ROOT);
+		String slug = upper.replaceAll("[^A-Z0-9]+", "_").replaceAll("^_+|_+$", "");
+		if (slug.isEmpty()) {
+			return null;
+		}
+		if (slug.length() > 32) {
+			slug = slug.substring(0, 32).replaceAll("_+$", "");
+		}
+		return slug.isEmpty() ? null : slug;
 	}
 
 	private String branchName(BranchMaster branch) {

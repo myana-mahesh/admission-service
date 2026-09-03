@@ -251,14 +251,16 @@ public class MiscPaymentService {
 
     private String normalizePaymentType(String paymentType) {
         if (!StringUtils.hasText(paymentType)) {
-            throw new IllegalArgumentException("Payment type is required. Allowed values: Cash, Cheque, Online.");
+            throw new IllegalArgumentException("Payment type is required.");
         }
-        String normalized = paymentType.trim().toLowerCase(Locale.ENGLISH);
+        String trimmed = paymentType.trim();
+        String normalized = trimmed.toLowerCase(Locale.ENGLISH);
         return switch (normalized) {
             case "cash" -> "Cash";
             case "cheque", "check" -> "Cheque";
             case "online" -> "Online";
-            default -> throw new IllegalArgumentException("Invalid payment type. Allowed values: Cash, Cheque, Online.");
+            // Preserve free-text values from the "Others" payment-type option.
+            default -> trimmed;
         };
     }
 

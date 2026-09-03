@@ -37,10 +37,25 @@ public class LookupController {
   }
 
   @GetMapping("/doc-types")
-  public ResponseEntity<List<DocumentTypeOptionDto>> listDocTypes() {
+  public ResponseEntity<List<DocumentTypeOptionDto>> listDocTypes(
+      @RequestParam(name = "includeOthers", required = false, defaultValue = "false") boolean includeOthers) {
     List<DocumentTypeOptionDto> docTypes = lookupService.getAllDocumentTypes().stream()
-        .filter(dt -> Boolean.TRUE.equals(dt.getIsMainDoc()))
-        .filter(dt -> dt.getCode() == null || !dt.getCode().toUpperCase().contains("OTHER"))
+        // Always exclude the legacy OTHERS<n> placeholder codes that the form
+        // briefly created when "Add Other Document" was clicked but never named.
+        .filter(dt -> dt.getCode() == null
+            || !dt.getCode().toUpperCase().matches("OTHERS\\d+"))
+        .filter(dt -> {
+            if (includeOthers) {
+                // Caller wants the full directory including custom (non-main) docs
+                // promoted from past "Other Document" uploads.
+                return dt.getCode() == null
+                    || !dt.getCode().toUpperCase().contains("OTHER")
+                    || !Boolean.TRUE.equals(dt.getIsMainDoc());
+            }
+            // Default: curated main docs only.
+            return Boolean.TRUE.equals(dt.getIsMainDoc())
+                && (dt.getCode() == null || !dt.getCode().toUpperCase().contains("OTHER"));
+        })
         .map(dt -> DocumentTypeOptionDto.builder()
             .id(dt.getDocTypeId())
             .code(dt.getCode())

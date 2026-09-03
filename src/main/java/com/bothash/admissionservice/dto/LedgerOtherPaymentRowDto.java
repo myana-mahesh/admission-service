@@ -35,4 +35,9 @@ public class LedgerOtherPaymentRowDto {
     private String receiptUrl;
     private String invoiceNumber;
     private String invoiceUrl;
+
+    /** Account-head verification state surfaced for the fees-overview Payments tab. */
+    private Boolean accountHeadVerified;
+    private String accountHeadVerifiedBy;
+    private java.time.LocalDateTime accountHeadVerifiedAt;
 }

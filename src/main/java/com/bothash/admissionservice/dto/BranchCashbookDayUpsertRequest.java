@@ -15,7 +15,11 @@ public class BranchCashbookDayUpsertRequest {
     private BigDecimal sentToHoAmount;
     private String sentToHoBy;
     private String notes;
-    /** Payment IDs the user picked for this remittance. Required when sending. */
+    /** Payment IDs the user picked for this remittance. Required when sending from COLLECTION. */
     private List<Long> paymentIds;
+    /** Source of the remitted cash: PETTY_CASH or COLLECTION. Default COLLECTION when null. */
+    private String source;
+    /** Free-text amount entered when source = PETTY_CASH. */
+    private BigDecimal pettyRemitAmount;
 }
 

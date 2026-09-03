@@ -1,6 +1,7 @@
 package com.bothash.admissionservice.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 import lombok.Builder;
@@ -21,6 +22,8 @@ public class BranchCollectionPaymentItemDto {
     private String studentName;
     private String courseName;
     private String paymentType;
+    /** Transaction date as recorded on the payment. */
+    private LocalDate paidOn;
     /** Original amount as collected from the student. */
     private BigDecimal amount;
     /** Total amount consumed by expenses / petty topups, net of petty returns. */
