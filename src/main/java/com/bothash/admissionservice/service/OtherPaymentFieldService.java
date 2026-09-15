@@ -44,6 +44,7 @@ public class OtherPaymentFieldService {
                 .required(Boolean.TRUE.equals(req.getRequired()))
                 .sortOrder(req.getSortOrder() == null ? 0 : req.getSortOrder())
                 .active(req.getActive() == null || req.getActive())
+                .sectionId(req.getSectionId())
                 .build();
         OtherPaymentField saved = fieldRepository.save(field);
         syncOptions(saved, req.getOptions());
@@ -61,6 +62,8 @@ public class OtherPaymentFieldService {
         if (req.getActive() != null) {
             field.setActive(req.getActive());
         }
+        // Allow moving between sections (or back to Other Details via null).
+        field.setSectionId(req.getSectionId());
         OtherPaymentField saved = fieldRepository.save(field);
         syncOptions(saved, req.getOptions());
         return toDto(saved, true);
@@ -97,6 +100,7 @@ public class OtherPaymentFieldService {
                 .required(field.isRequired())
                 .sortOrder(field.getSortOrder())
                 .active(field.isActive())
+                .sectionId(field.getSectionId())
                 .options(optionDtos)
                 .build();
     }

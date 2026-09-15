@@ -40,7 +40,25 @@ public class MiscPaymentService {
 
     @Transactional
     public MiscPaymentDto create(MiscPaymentRequest request) {
-        validate(request);
+        if (request == null) {
+            throw new IllegalArgumentException("Request body is required.");
+        }
+        MiscPayment parent = null;
+        if (request.getParentPaymentId() != null) {
+            parent = miscPaymentRepository.findById(request.getParentPaymentId())
+                    .orElseThrow(() -> new IllegalArgumentException("Original payment record no longer exists. Please refresh the page."));
+            if (parent.getParentPaymentId() != null) {
+                parent = miscPaymentRepository.findById(parent.getParentPaymentId())
+                        .orElseThrow(() -> new IllegalArgumentException("Original payment record no longer exists. Please refresh the page."));
+            }
+            request.setStudentName(parent.getStudentName());
+            request.setContactNumber(parent.getContactNumber());
+            request.setBatch(parent.getBatch());
+            request.setCourseId(parent.getCourseId());
+            request.setCollegeName(parent.getCollegeName());
+            request.setFeeType(parent.getFeeType());
+        }
+        validate(request, parent != null);
 
         Course course = null;
         if (request.getCourseId() != null) {
@@ -53,11 +71,12 @@ public class MiscPaymentService {
         }
 
         MiscPayment payment = MiscPayment.builder()
+                .parentPaymentId(parent != null ? parent.getPaymentId() : null)
                 .studentName(trimToNull(request.getStudentName()))
                 .contactNumber(normalizeOptionalLegacyText(request.getContactNumber()))
                 .batch(normalizeOptionalLegacyText(request.getBatch()))
                 .courseId(course != null ? course.getCourseId() : null)
-                .courseName(normalizeOptionalCourseName(course))
+                .courseName(parent != null ? parent.getCourseName() : normalizeOptionalCourseName(course))
                 .collegeName(normalizeOptionalLegacyText(request.getCollegeName()))
                 .feeType(trimToNull(request.getFeeType()))
                 .amount(request.getAmount())
@@ -79,10 +98,9 @@ public class MiscPaymentService {
         if (paymentId == null) {
             throw new IllegalArgumentException("Payment id is required.");
         }
-        validate(request);
-
         MiscPayment existing = miscPaymentRepository.findById(paymentId)
                 .orElseThrow(() -> new IllegalArgumentException("Miscellaneous payment not found."));
+        validate(request, existing.getParentPaymentId() != null);
 
         Course course = null;
         if (request.getCourseId() != null) {
@@ -121,6 +139,9 @@ public class MiscPaymentService {
         }
         MiscPayment existing = miscPaymentRepository.findById(paymentId)
                 .orElseThrow(() -> new IllegalArgumentException("Miscellaneous payment not found."));
+        if (miscPaymentRepository.existsByParentPaymentId(paymentId)) {
+            throw new IllegalArgumentException("Cannot delete this record while additional payments are linked to it. Delete the additional payments first.");
+        }
         safeDeleteInvoice(existing.getInvoiceFilePath());
         miscPaymentRepository.delete(existing);
     }
@@ -168,9 +189,78 @@ public class MiscPaymentService {
                 .build();
     }
 
+    @Transactional(readOnly = true)
+    public MiscPaymentPageResponse searchRecords(String q, Long courseId, String batch,
+            String feeType, String otherFeeType, String paymentMode, LocalDate startDate,
+            LocalDate endDate, int page, int size) {
+        Specification<MiscPayment> filters = Specification.where(keywordLike(q))
+                .and(courseIdEquals(courseId)).and(batchEquals(batch))
+                .and(recordFeeType(feeType, otherFeeType)).and(paymentModeEquals(paymentMode))
+                .and(paymentDateGte(startDate)).and(paymentDateLte(endDate));
+        Specification<MiscPayment> records = (root, query, cb) -> {
+            var matching = query.subquery(Long.class);
+            var payment = matching.from(MiscPayment.class);
+            var belongsToRecord = cb.or(cb.equal(payment.get("paymentId"), root.get("paymentId")),
+                    cb.equal(payment.get("parentPaymentId"), root.get("paymentId")));
+            var filter = filters.toPredicate(payment, query, cb);
+            matching.select(payment.get("paymentId")).where(filter == null
+                    ? belongsToRecord : cb.and(belongsToRecord, filter));
+            return cb.and(cb.isNull(root.get("parentPaymentId")), cb.exists(matching));
+        };
+        Page<MiscPayment> result = miscPaymentRepository.findAll(records, paymentPage(page, size));
+        var totals = result.isEmpty() ? java.util.Map.<Long, MiscPaymentRepository.RecordTotal>of()
+                : miscPaymentRepository.summarizeRecords(result.getContent().stream()
+                        .map(MiscPayment::getPaymentId).toList()).stream()
+                        .collect(java.util.stream.Collectors.toMap(MiscPaymentRepository.RecordTotal::getRecordId,
+                                java.util.function.Function.identity()));
+        var content = result.getContent().stream().map(payment -> {
+            var dto = toDto(payment);
+            var total = totals.get(payment.getPaymentId());
+            dto.setTotalAmount(total == null ? payment.getAmount() : total.getTotalAmount());
+            dto.setPaymentCount(total == null ? 1L : total.getPaymentCount());
+            return dto;
+        }).toList();
+        return pageResponse(result, content);
+    }
+
+    @Transactional(readOnly = true)
+    public MiscPaymentPageResponse history(Long recordId, int page, int size) {
+        var record = miscPaymentRepository.findById(recordId)
+                .orElseThrow(() -> new IllegalArgumentException("Payment record no longer exists. Please refresh the page."));
+        Long rootId = record.getParentPaymentId() == null ? record.getPaymentId() : record.getParentPaymentId();
+        Specification<MiscPayment> linked = (root, query, cb) -> cb.or(
+                cb.equal(root.get("paymentId"), rootId), cb.equal(root.get("parentPaymentId"), rootId));
+        Page<MiscPayment> result = miscPaymentRepository.findAll(linked, paymentPage(page, size));
+        return pageResponse(result, result.getContent().stream().map(this::toDto).toList());
+    }
+
+    private Pageable paymentPage(int page, int size) {
+        return PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100),
+                Sort.by(Sort.Direction.DESC, "paymentDate", "paymentId"));
+    }
+
+    private MiscPaymentPageResponse pageResponse(Page<MiscPayment> result, List<MiscPaymentDto> content) {
+        return MiscPaymentPageResponse.builder().content(content).number(result.getNumber())
+                .size(result.getSize()).totalPages(result.getTotalPages()).totalElements(result.getTotalElements())
+                .numberOfElements(result.getNumberOfElements()).first(result.isFirst()).last(result.isLast()).build();
+    }
+
+    private Specification<MiscPayment> recordFeeType(String feeType, String otherFeeType) {
+        if (!"other".equals(canonicalizeInput(feeType, true))) return feeTypeEquals(feeType);
+        Specification<MiscPayment> custom = (root, query, cb) -> {
+            var standard = List.of("Exam Fees", "Book Fees", "Library Fees", "Practical Fees", "Form Fees", "Miscellaneous")
+                    .stream().flatMap(value -> java.util.stream.Stream.of(
+                            canonicalizeInput(value, false), canonicalizeInput(value, true))).distinct().toList();
+            var value = canonicalizeField(cb, root.get("feeType"));
+            return cb.and(cb.notEqual(value, ""), cb.not(value.in(standard)));
+        };
+        return custom.and(feeTypeEquals(otherFeeType));
+    }
+
     private MiscPaymentDto toDto(MiscPayment payment) {
         return MiscPaymentDto.builder()
                 .paymentId(payment.getPaymentId())
+                .parentPaymentId(payment.getParentPaymentId())
                 .studentName(payment.getStudentName())
                 .contactNumber(payment.getContactNumber())
                 .batch(payment.getBatch())
@@ -222,7 +312,7 @@ public class MiscPaymentService {
         return StringUtils.hasText(value) ? value.trim() : "";
     }
 
-    private void validate(MiscPaymentRequest request) {
+    private void validate(MiscPaymentRequest request, boolean allowNegative) {
         if (request == null) {
             throw new IllegalArgumentException("Request body is required.");
         }
@@ -235,8 +325,15 @@ public class MiscPaymentService {
         if (!StringUtils.hasText(request.getFeeType())) {
             throw new IllegalArgumentException("Fees type is required.");
         }
-        if (request.getAmount() == null || request.getAmount().signum() <= 0) {
-            throw new IllegalArgumentException("Fees amount must be greater than zero.");
+        if (request.getAmount() == null || request.getAmount().signum() == 0
+                || (!allowNegative && request.getAmount().signum() < 0)) {
+            throw new IllegalArgumentException(allowNegative
+                    ? "Payment amount must be non-zero. Use a negative amount for a refund."
+                    : "Fees amount must be greater than zero.");
+        }
+        if (request.getAmount().stripTrailingZeros().scale() > 2
+                || request.getAmount().abs().compareTo(new java.math.BigDecimal("9999999999.99")) > 0) {
+            throw new IllegalArgumentException("Enter a valid amount with at most two decimal places.");
         }
         if (!StringUtils.hasText(request.getPaymentMode())) {
             throw new IllegalArgumentException("Payment mode is required.");

@@ -11,6 +11,7 @@ import lombok.Data;
 @Builder
 public class MiscPaymentDto {
     private Long paymentId;
+    private Long parentPaymentId;
     private String studentName;
     private String contactNumber;
     private String batch;
@@ -19,6 +20,8 @@ public class MiscPaymentDto {
     private String collegeName;
     private String feeType;
     private BigDecimal amount;
+    private BigDecimal totalAmount;
+    private Long paymentCount;
     private String paymentMode;
     private String paymentType;
     private LocalDate paymentDate;

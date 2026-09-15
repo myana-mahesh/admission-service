@@ -1,7 +1,5 @@
 package com.bothash.admissionservice.dto;
 
-import java.util.List;
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -11,13 +9,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class OtherPaymentFieldDto {
+public class AdmissionSectionDto {
     private Long id;
-    private String label;
-    private String inputType;
-    private Boolean required;
+    private String name;
     private Integer sortOrder;
     private Boolean active;
-    private Long sectionId;
-    private List<OtherPaymentFieldOptionDto> options;
 }

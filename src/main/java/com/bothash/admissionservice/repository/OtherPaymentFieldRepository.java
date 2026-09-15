@@ -9,4 +9,5 @@ import com.bothash.admissionservice.entity.OtherPaymentField;
 public interface OtherPaymentFieldRepository extends JpaRepository<OtherPaymentField, Long> {
     List<OtherPaymentField> findByActiveTrueOrderBySortOrderAscLabelAsc();
     List<OtherPaymentField> findAllByOrderBySortOrderAscLabelAsc();
+    List<OtherPaymentField> findBySectionId(Long sectionId);
 }

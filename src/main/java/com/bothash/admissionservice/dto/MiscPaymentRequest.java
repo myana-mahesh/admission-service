@@ -9,6 +9,7 @@ import lombok.Data;
 public class MiscPaymentRequest {
 
     private Long paymentId;
+    private Long parentPaymentId;
 
     private String studentName;
 

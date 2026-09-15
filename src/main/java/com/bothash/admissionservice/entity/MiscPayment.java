@@ -19,7 +19,8 @@ import lombok.Setter;
 @Entity
 @Table(name = "misc_payment", indexes = {
         @Index(name = "idx_misc_payment_date", columnList = "payment_date"),
-        @Index(name = "idx_misc_payment_contact", columnList = "contact_number")
+        @Index(name = "idx_misc_payment_contact", columnList = "contact_number"),
+        @Index(name = "idx_misc_payment_parent", columnList = "parent_payment_id")
 })
 @Getter
 @Setter
@@ -32,6 +33,9 @@ public class MiscPayment extends Auditable {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "payment_id")
     private Long paymentId;
+
+    @Column(name = "parent_payment_id")
+    private Long parentPaymentId;
 
     @Column(name = "student_name", length = 160, nullable = false)
     private String studentName;

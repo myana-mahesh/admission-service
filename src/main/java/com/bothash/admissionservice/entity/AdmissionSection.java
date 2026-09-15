@@ -13,35 +13,24 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "other_payment_field")
+@Table(name = "admission_section")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class OtherPaymentField extends Auditable {
+public class AdmissionSection extends Auditable {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(nullable = false, length = 120)
-    private String label;
-
-    @Column(nullable = false, length = 20)
-    private String inputType;
-
-    @Column(nullable = false)
-    private boolean required;
+    private String name;
 
     @Column(nullable = false)
     private int sortOrder;
 
     @Column(nullable = false)
     private boolean active = true;
-
-    // Nullable — NULL means the field renders in the fixed "Other Details"
-    // section. Non-null points at an admin-created AdmissionSection.
-    @Column(name = "section_id")
-    private Long sectionId;
 }

@@ -50,6 +50,32 @@ public class MiscPaymentController {
         return miscPaymentService.search(q, courseId, batch, feeType, paymentMode, startDate, endDate, page, size);
     }
 
+    @GetMapping("/records")
+    public MiscPaymentPageResponse records(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Long courseId,
+            @RequestParam(required = false) String batch,
+            @RequestParam(required = false) String feeType,
+            @RequestParam(required = false) String otherFeeType,
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return miscPaymentService.searchRecords(q, courseId, batch, feeType, otherFeeType,
+                paymentMode, startDate, endDate, page, size);
+    }
+
+    @GetMapping("/{recordId}/payments")
+    public ResponseEntity<?> history(@PathVariable Long recordId,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
+        try {
+            return ResponseEntity.ok(miscPaymentService.history(recordId, page, size));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
+        }
+    }
+
     @PostMapping
     public ResponseEntity<?> create(@RequestBody MiscPaymentRequest request) {
         try {
